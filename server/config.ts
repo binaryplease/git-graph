@@ -1,4 +1,5 @@
 import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { z } from 'zod/v4'
 
 // Boundary validation of the process environment (ADR-0013). Parsed once at
@@ -10,9 +11,9 @@ const EnvironmentSchema = z.object({
   HOST: z.string().default('127.0.0.1'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   // Directory scanned for git repositories (the root itself plus its direct
-  // children). Defaults to the home directory of the user running the server;
-  // set it (or pass a positional CLI argument) to point at a projects folder.
-  GIT_GRAPH_ROOT: z.string().min(1).default(homedir()),
+  // children). Defaults to ~/Developer, the usual projects folder; set it (or
+  // pass a positional CLI argument) to point somewhere else.
+  GIT_GRAPH_ROOT: z.string().min(1).default(join(homedir(), 'Developer')),
 })
 
 export type Config = z.infer<typeof EnvironmentSchema>

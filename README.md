@@ -33,9 +33,9 @@ the production server.
 
 The server scans a **served root** for git repositories — the root itself (if
 it is one) plus its direct children — and runs `git log --all --topo-order`
-in the one you select. The root defaults to the home directory of the user
-running the server; point it at a projects folder with `GIT_GRAPH_ROOT` (see
-`.mise.toml`) or a positional argument: `bun server/index.ts ~/Developer`.
+in the one you select. The root defaults to `~/Developer`; point it elsewhere
+with `GIT_GRAPH_ROOT` (see `.mise.toml`) or a positional argument:
+`bun server/index.ts ~/projects`.
 Only listed repositories are ever passed to git. This is a **local-only**
 tool — the server binds to loopback and is not meant to be hosted.
 

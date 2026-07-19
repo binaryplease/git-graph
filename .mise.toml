@@ -7,8 +7,8 @@ PORT = "3010"
 NODE_ENV = "development"
 
 # Directory scanned for git repositories (the served root itself plus its
-# direct children). Defaults to the home directory of the user running the
-# server; a positional CLI argument to the server wins over this.
+# direct children). Defaults to ~/Developer; a positional CLI argument to the
+# server wins over this.
 # GIT_GRAPH_ROOT = "/path/to/projects"
 
 [tasks.dev]
