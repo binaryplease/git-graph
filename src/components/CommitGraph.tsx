@@ -123,7 +123,7 @@ export function CommitGraph({ commits, searchQuery = '', onStats }: CommitGraphP
   return (
     <div className="relative">
       <svg
-        className="pointer-events-none absolute top-0 left-0"
+        className="pointer-events-none absolute top-0 left-0 z-10"
         width={graphWidth}
         height={totalHeight}
         aria-hidden="true"
