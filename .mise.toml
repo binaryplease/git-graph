@@ -1,0 +1,43 @@
+[tools]
+bun = "1"
+
+[env]
+# Offset from binp-file-explorer's 3000 so both local services can run at once.
+PORT = "3010"
+NODE_ENV = "development"
+
+# Directory scanned for git repositories (the served root itself plus its
+# direct children). Defaults to the home directory of the user running the
+# server; a positional CLI argument to the server wins over this.
+# GIT_GRAPH_ROOT = "/path/to/projects"
+
+[tasks.dev]
+description = "Start dev servers (Elysia + Vite) concurrently"
+run = 'bunx concurrently -k -n server,client "bun --watch server/index.ts" "bunx vite"'
+
+[tasks."dev:server"]
+description = "Start Elysia server in watch mode"
+run = "bun --watch server/index.ts"
+
+[tasks."dev:client"]
+description = "Start Vite dev server"
+run = "bunx vite"
+
+[tasks.build]
+description = "Build client (Vite) and server (Bun)"
+run = """
+bunx vite build
+NODE_ENV=production bun build server/index.ts --outdir dist/server --target bun --sourcemap=linked --production
+"""
+
+[tasks.start]
+description = "Start production server"
+run = "NODE_ENV=production bun dist/server/index.js"
+
+[tasks.typecheck]
+description = "Type-check all TypeScript"
+run = "bunx tsc --noEmit"
+
+[tasks.test]
+description = "Run unit tests (bun test)"
+run = "bun test"

@@ -1,0 +1,33 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Nix build artifacts
+result
+.direnv
+.playwright-cli
+
+# Local dev notebook: ideas, plans, requirements, run logs (sole-dev, not yet
+# adopted by ADR — see .nightshift/README.md)
+.nightshift
