@@ -23,6 +23,7 @@ update `backlog.md` — so the next agent inherits the context.
 | Frontend | React 19 | |
 | Styling | Tailwind CSS v4 | `@tailwindcss/vite` plugin; palette tokens in `src/index.css`. |
 | Icons | `@tabler/icons-react` | ADR-0022 — never Unicode characters as icons. |
+| Diff view | `@git-diff-view/react` + `@git-diff-view/shiki` | Pinned exactly at `0.1.7` (pre-1.0). Whole-file tokenization for inline commit diffs — beats per-line highlighting (diff2html). First substantial third-party runtime UI dependency; ADR still open (see `.nightshift/backlog.md`). |
 | Build | Vite (client) + Bun bundler (server) | client → `dist/client/`, server → `dist/server/`. |
 | Dev env | mise | `.mise.toml` declares tool versions, env vars, and tasks (ADR-0004). |
 
@@ -52,14 +53,22 @@ consumers (standalone instance · shared package · nightshift-ui module):
     updating the regression fixture in `graphLayout.test.ts`, which pins the
     prototype-captured output.
   - `gitLog.ts` — `git log` wire format + parser (unit separator `%x1f`).
+  - `commitDetail.ts` — `git show` wire format + parser for a single commit
+    (header + `--raw`/`--numstat` file block, zipped positionally). Merges use
+    `-m --first-parent`.
+  - `fileDiff.ts` — `git show` argument list + `languageForPath` +
+    `splitPatchIntoFileHunks` for a single file's diff (patch + both complete
+    blobs; `--no-ext-diff --no-textconv` load-bearing).
   - `fuzzy.ts` — subsequence fuzzy matcher with matched-character segments
     (ADR-0019).
 - `server/` — Elysia service. `services/git.ts` scans the served root and
   shells out to git; repository identifiers are re-validated against the
   listing so arbitrary paths never reach the shell.
 - `src/` — React client. `components/CommitGraph.tsx` is the reusable piece:
-  commits in, SVG + rows out, no fetching, no app chrome. `App.tsx` is the
-  standalone shell (repo picker, search, readout, states).
+  commits in, SVG + rows out, no fetching, no app chrome. `CommitDetailPanel.tsx`
+  (changed files, copy-hash, parent navigation) and `FileDiff.tsx` (inline
+  disclosure per ADR-0031) are likewise fetch-free — `App.tsx`, the standalone
+  shell (repo picker, search, readout, states, keyboard), owns all fetching.
 
 ## Dev commands
 
@@ -73,7 +82,10 @@ cover branch tips, 2-parent merges, lane reuse after a branch closes, octopus
 merges (3+ parents), root commits, disconnected histories, truncated windows,
 plus a fixture pinned to the prototype's exact output. `server/services/git.test.ts`
 exercises real git against a scratch repository (merge, tags, empty repo,
-truncation, traversal rejection).
+truncation, traversal rejection). The `git show` parsers (`commitDetail.ts`,
+`fileDiff.ts`) and their route path-membership guards are covered too, and
+client components have DOM tests (`bunfig.toml` preloads happy-dom via
+`src/test/setup.ts`). Currently 73 tests across 7 files.
 
 ## UX conventions
 

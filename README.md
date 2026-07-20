@@ -44,6 +44,8 @@ tool — the server binds to loopback and is not meant to be hosted.
 Read-only viewer: repository picker (deep-linkable via `?repo=`), SVG commit
 graph with per-lane colours, hollow merge nodes, curved elbow edges, ref pills
 (HEAD / branch / remote / tag), fuzzy search over subject / hash / author with
-matched-character highlighting, and a commits/lanes/matches readout. Planned:
-git actions from the UI (merge branch, checkout, …) and embedding the graph
-component in nightshift-ui.
+matched-character highlighting, and a commits/lanes/matches readout. Selecting a
+commit opens a detail panel — full message, changed files, copy-hash, clickable
+parents — and each changed file expands to an inline, whole-file-tokenized diff.
+Planned: git actions from the UI (merge branch, checkout, …) and embedding the
+graph component in nightshift-ui.
