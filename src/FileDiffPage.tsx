@@ -3,7 +3,7 @@ import { IconArrowRight, IconFileDiff, IconGitMerge } from '@tabler/icons-react'
 import type { FileDiff as FileDiffPayload } from '../shared/git.schema'
 import { fetchFileDiff } from './lib/api'
 import { loadHighlighter } from './lib/highlighter'
-import { parseFileDiffParams } from './lib/fileDiffLink'
+import { parseFileDiffParams } from './lib/diffRoutes'
 import { FileDiff } from './components/FileDiff'
 import { CopyButton } from './components/CopyButton'
 

@@ -1,10 +1,14 @@
 import {
+  BranchListSchema,
   CommitDetailSchema,
   CommitLogSchema,
+  CompareSummarySchema,
   FileDiffSchema,
   RepositoryListSchema,
+  type BranchList,
   type CommitDetail,
   type CommitLog,
+  type CompareSummary,
   type FileDiff,
   type RepositoryList,
 } from '../../shared/git.schema'
@@ -58,4 +62,30 @@ export async function fetchFileDiff(
     path: filePath,
   })
   return FileDiffSchema.parse(await requestJson(`/api/git/diff?${query}`))
+}
+
+export async function fetchBranches(repositoryRelativePath: string): Promise<BranchList> {
+  const query = new URLSearchParams({ repo: repositoryRelativePath })
+  return BranchListSchema.parse(await requestJson(`/api/git/branches?${query}`))
+}
+
+export async function fetchCompareSummary(
+  repositoryRelativePath: string,
+  headBranch: string,
+  baseBranch = '',
+): Promise<CompareSummary> {
+  const query = new URLSearchParams({ repo: repositoryRelativePath, head: headBranch })
+  if (baseBranch) query.set('base', baseBranch)
+  return CompareSummarySchema.parse(await requestJson(`/api/git/compare?${query}`))
+}
+
+export async function fetchCompareFileDiff(
+  repositoryRelativePath: string,
+  headBranch: string,
+  filePath: string,
+  baseBranch = '',
+): Promise<FileDiff> {
+  const query = new URLSearchParams({ repo: repositoryRelativePath, head: headBranch, path: filePath })
+  if (baseBranch) query.set('base', baseBranch)
+  return FileDiffSchema.parse(await requestJson(`/api/git/compare/diff?${query}`))
 }

@@ -69,6 +69,13 @@ beforeAll(() => {
   runGit(filesRepositoryPath, 'rm', '-q', 'b.txt')
   runGit(filesRepositoryPath, 'add', '-A')
   runGit(filesRepositoryPath, 'commit', '-m', 'rename, delete, binary')
+  // An unmerged branch, so a three-dot compare against main has something to
+  // show (the merged `side` branch does not — it is already an ancestor).
+  runGit(filesRepositoryPath, 'checkout', '-b', 'feature-x')
+  writeFile('c.txt', 'hello from feature\n')
+  runGit(filesRepositoryPath, 'add', '-A')
+  runGit(filesRepositoryPath, 'commit', '-m', 'feature-only commit')
+  runGit(filesRepositoryPath, 'checkout', 'main')
 })
 
 afterAll(() => {
@@ -348,6 +355,104 @@ describe('readFileDiff', () => {
     expect(await service().readFileDiff('nope', 'deadbeef', 'a.txt')).toEqual({
       ok: false,
       reason: 'unknown-repository',
+    })
+  })
+})
+
+describe('readBranches', () => {
+  const service = () => createGitService({ rootAbsolutePath: scratchRoot })
+
+  test('lists local branches with the default flagged and sorted first', async () => {
+    const result = await service().readBranches('files-repo')
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+    expect(result.branches.repository).toBe('files-repo')
+    expect(result.branches.defaultBranch).toBe('main')
+    // Default first, then alphabetical; the checked-out branch is flagged.
+    expect(result.branches.branches).toEqual([
+      { name: 'main', isDefault: true, isCurrent: true },
+      { name: 'feature-x', isDefault: false, isCurrent: false },
+      { name: 'side', isDefault: false, isCurrent: false },
+    ])
+  })
+
+  test('an unknown repository is rejected, not path-traversed', async () => {
+    expect(await service().readBranches('../elsewhere')).toEqual({
+      ok: false,
+      reason: 'unknown-repository',
+    })
+  })
+})
+
+describe('readCompareSummary', () => {
+  const service = () => createGitService({ rootAbsolutePath: scratchRoot })
+
+  test('shows what a branch adds relative to its merge base with the default', async () => {
+    // feature-x branched off main's tip and added c.txt. A three-dot compare
+    // shows only that, and an omitted base resolves to the default branch (main).
+    const result = await service().readCompareSummary('files-repo', 'feature-x', '')
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+    expect(result.summary.base).toBe('main')
+    expect(result.summary.head).toBe('feature-x')
+    expect(result.summary.mergeBase).toMatch(/^[0-9a-f]+$/)
+    expect(result.summary.files).toEqual([
+      { path: 'c.txt', previousPath: null, status: 'added', additions: 1, deletions: 0, binary: false },
+    ])
+  })
+
+  test('a branch already merged into the base shows no changes', async () => {
+    // side was merged into main, so it is an ancestor — a three-dot compare is
+    // empty, which is the correct "this branch adds nothing new" answer.
+    const result = await service().readCompareSummary('files-repo', 'side', 'main')
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+    expect(result.summary.files).toEqual([])
+  })
+
+  test('rejects a branch that is not in the listing, and an unknown repository', async () => {
+    expect(await service().readCompareSummary('files-repo', 'nope', '')).toMatchObject({
+      ok: false,
+      reason: 'unknown-ref',
+    })
+    expect(await service().readCompareSummary('files-repo', 'feature-x', 'also-nope')).toMatchObject({
+      ok: false,
+      reason: 'unknown-ref',
+    })
+    // A hostile ref never reaches git — membership rejects it as an unknown ref.
+    expect(await service().readCompareSummary('files-repo', '--output=/tmp/pwned', 'main')).toMatchObject({
+      ok: false,
+      reason: 'unknown-ref',
+    })
+    expect(await service().readCompareSummary('nope', 'feature-x', 'main')).toEqual({
+      ok: false,
+      reason: 'unknown-repository',
+    })
+  })
+})
+
+describe('readCompareFileDiff', () => {
+  const service = () => createGitService({ rootAbsolutePath: scratchRoot })
+
+  test('returns the file’s patch and blobs across the merge-base comparison', async () => {
+    const result = await service().readCompareFileDiff('files-repo', 'feature-x', '', 'c.txt')
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+    expect(result.diff.status).toBe('added')
+    expect(result.diff.oldSource).toBeNull()
+    expect(result.diff.newSource).toBe('hello from feature\n')
+    expect(result.diff.hunks[0]).toContain('+hello from feature')
+  })
+
+  test('rejects a path the comparison does not touch', async () => {
+    for (const outsidePath of ['a.txt', '../../etc/passwd', '.git/config']) {
+      expect(await service().readCompareFileDiff('files-repo', 'feature-x', '', outsidePath)).toMatchObject({
+        ok: false,
+        reason: 'unknown-file',
+      })
+    }
+  })
+
+  test('rejects an unknown branch before reaching a file', async () => {
+    expect(await service().readCompareFileDiff('files-repo', 'nope', '', 'c.txt')).toMatchObject({
+      ok: false,
+      reason: 'unknown-ref',
     })
   })
 })

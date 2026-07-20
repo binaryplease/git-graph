@@ -213,6 +213,87 @@ export const FileDiffQuerySchema = z.object({
 })
 export type FileDiffQuery = z.infer<typeof FileDiffQuerySchema>
 
+// A git ref name for a compare view. The real guard is membership — a requested
+// ref is rejected unless it is one the repository's own branch listing reports
+// (server side) — but this keeps obviously-hostile input (leading dash so it
+// cannot read as an option, whitespace, shell metacharacters) off the wire.
+export const GIT_REF_NAME_PATTERN = /^(?!-)[A-Za-z0-9._][A-Za-z0-9._/-]*$/
+
+export const BranchSummarySchema = z.object({
+  name: z.string().min(1).describe('Short branch name, e.g. `main` or `feature/x`.'),
+  isDefault: z
+    .boolean()
+    .default(false)
+    .describe('True for the repository default branch — the base a compare uses when none is given.'),
+  isCurrent: z.boolean().default(false).describe('True for the currently checked-out branch (git HEAD).'),
+})
+export type BranchSummary = z.infer<typeof BranchSummarySchema>
+
+export const BranchListSchema = z.object({
+  repository: z.string().describe('Display name of the repository the branches were read from.'),
+  defaultBranch: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe('The branch a compare diffs against when no base is given (ADR-0024); null if there are no branches.'),
+  branches: z
+    .array(BranchSummarySchema)
+    .default([])
+    .describe('Local branches, sorted with the default first, then alphabetically.'),
+})
+export type BranchList = z.infer<typeof BranchListSchema>
+
+export const BranchListQuerySchema = z.object({
+  repo: z.string().default('').describe('Repository identifier: the `relativePath` from the repository listing.'),
+})
+export type BranchListQuery = z.infer<typeof BranchListQuerySchema>
+
+export const CompareSummarySchema = z.object({
+  base: z.string().describe('The branch diffed against — the resolved base (the default branch when none was given).'),
+  head: z.string().describe('The branch whose changes are shown, relative to the base.'),
+  mergeBase: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe(
+      'Abbreviated hash where the two branches diverged (git `merge-base`); the effective old side ' +
+        'of the diff. Null when the branches share no history (ADR-0024).',
+    ),
+  files: z
+    .array(CommitFileChangeSchema)
+    .default([])
+    .describe('Files that differ between the merge base and the head, as a first-parent-style three-dot diff.'),
+  filesTruncated: z
+    .boolean()
+    .default(false)
+    .describe('True when the comparison touches more files than the service returns.'),
+})
+export type CompareSummary = z.infer<typeof CompareSummarySchema>
+
+export const CompareQuerySchema = z.object({
+  repo: z.string().default('').describe('Repository identifier: the `relativePath` from the repository listing.'),
+  head: z
+    .string()
+    .regex(GIT_REF_NAME_PATTERN, 'must be a git branch name')
+    .describe('Branch whose changes to show — validated by membership against the branch listing.'),
+  base: z
+    .string()
+    .default('')
+    .describe('Branch to diff against; empty means the repository default branch. Validated by membership.'),
+})
+export type CompareQuery = z.infer<typeof CompareQuerySchema>
+
+export const CompareFileDiffQuerySchema = CompareQuerySchema.extend({
+  path: z
+    .string()
+    .min(1)
+    .describe(
+      'Repository-relative path of the file to diff. Validated by membership: it must be one of the ' +
+        'paths the comparison itself reports (or the `previousPath` of a rename), never by pattern.',
+    ),
+})
+export type CompareFileDiffQuery = z.infer<typeof CompareFileDiffQuerySchema>
+
 export const GitErrorSchema = z.object({
   error: z.string().describe('Human-readable description of what went wrong.'),
 })

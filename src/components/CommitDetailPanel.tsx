@@ -1,25 +1,10 @@
 import type { MouseEvent, ReactNode } from 'react'
-import {
-  IconArrowRight,
-  IconBinary,
-  IconChevronDown,
-  IconChevronRight,
-  IconExternalLink,
-  IconFileDiff,
-  IconFileMinus,
-  IconFilePlus,
-  IconFileUnknown,
-  IconX,
-} from '@tabler/icons-react'
-import type {
-  CommitDetail,
-  CommitFileChange,
-  FileChangeStatus,
-  FileDiff as FileDiffPayload,
-} from '../../shared/git.schema'
+import { IconBinary, IconChevronDown, IconChevronRight, IconExternalLink, IconGitCompare, IconX } from '@tabler/icons-react'
+import type { CommitDetail, CommitFileChange, FileDiff as FileDiffPayload } from '../../shared/git.schema'
 import { CopyButton } from './CopyButton'
 import { FileDiff } from './FileDiff'
-import { RefPill, refName } from './RefPill'
+import { FileLineStats, FileStatusIcon, describeFileChange } from './fileStatus'
+import { RefPill, classifyRef, refName } from './RefPill'
 
 // The commit detail surface: one commit in, its metadata, message and changed
 // files out. Like CommitGraph it fetches nothing and owns no app chrome — the
@@ -32,28 +17,6 @@ const MODIFIER_HINT =
   typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform)
     ? 'Cmd'
     : 'Ctrl'
-
-const STATUS_ICONS: Record<FileChangeStatus, typeof IconFileDiff> = {
-  added: IconFilePlus,
-  modified: IconFileDiff,
-  deleted: IconFileMinus,
-  renamed: IconArrowRight,
-  copied: IconArrowRight,
-  'type-changed': IconFileDiff,
-  unmerged: IconFileUnknown,
-  unknown: IconFileUnknown,
-}
-
-const STATUS_COLORS: Record<FileChangeStatus, string> = {
-  added: 'text-[#7ee787]',
-  modified: 'text-[#e3b341]',
-  deleted: 'text-[#ff7b72]',
-  renamed: 'text-[#d2a8ff]',
-  copied: 'text-[#d2a8ff]',
-  'type-changed': 'text-[#e3b341]',
-  unmerged: 'text-dim',
-  unknown: 'text-dim',
-}
 
 /** ISO 8601 from git → the local, readable form, with the raw value as a tooltip. */
 function formatCommitDate(isoDate: string) {
@@ -106,11 +69,7 @@ function FileChangeRow({
   isLoadingDiff,
   diffError,
 }: FileChangeRowProps) {
-  const StatusIcon = STATUS_ICONS[file.status]
-  const description =
-    file.previousPath !== null
-      ? `${file.status}: ${file.previousPath} → ${file.path}`
-      : `${file.status}: ${file.path}`
+  const description = describeFileChange(file)
   const ChevronIcon = isExpanded ? IconChevronDown : IconChevronRight
   const diffBodyId = `file-diff-${file.path.replace(/[^\w-]/g, '_')}`
 
@@ -144,11 +103,7 @@ function FileChangeRow({
           }
         >
           <ChevronIcon size={13} className="shrink-0 text-faint" aria-hidden />
-          <StatusIcon
-            size={14}
-            className={`shrink-0 ${STATUS_COLORS[file.status]}`}
-            aria-label={file.status}
-          />
+          <FileStatusIcon status={file.status} />
           <span className="min-w-0 flex-1 truncate font-mono text-[11.5px]">
             {file.previousPath !== null && (
               <span className="text-faint line-through">{file.previousPath} </span>
@@ -192,19 +147,7 @@ function FileChangeRow({
         {file.binary ? (
           <IconBinary size={13} className="shrink-0 text-faint" aria-label="binary file" />
         ) : (
-          <span className="shrink-0 font-mono text-[11px] tabular-nums">
-            {file.additions !== null && file.additions > 0 && (
-              <span className="text-[#7ee787]">+{file.additions}</span>
-            )}
-            {file.additions !== null &&
-              file.additions > 0 &&
-              file.deletions !== null &&
-              file.deletions > 0 &&
-              ' '}
-            {file.deletions !== null && file.deletions > 0 && (
-              <span className="text-[#ff7b72]">−{file.deletions}</span>
-            )}
-          </span>
+          <FileLineStats additions={file.additions} deletions={file.deletions} />
         )}
       </div>
 
@@ -242,6 +185,14 @@ export type CommitDetailPanelProps = {
    * row it opens).
    */
   buildFileDiffHref: (filePath: string) => string | null
+  /** URL of the full-commit tab (metadata + every file's diff), or null with no commit context. */
+  buildCommitDiffHref: () => string | null
+  /**
+   * URL comparing a branch against the default base, or null for refs that are
+   * not comparable (tags, or the default branch itself). The host owns the route
+   * scheme; the panel only turns branch names into links.
+   */
+  buildCompareHref: (branchName: string) => string | null
   /** The diff for {@link expandedFilePath}; the host owns the fetching. */
   fileDiff: FileDiffPayload | null
   isLoadingFileDiff: boolean
@@ -259,11 +210,14 @@ export function CommitDetailPanel({
   expandedFilePath,
   onToggleFile,
   buildFileDiffHref,
+  buildCommitDiffHref,
+  buildCompareHref,
   fileDiff,
   isLoadingFileDiff,
   fileDiffError,
   onClose,
 }: CommitDetailPanelProps) {
+  const commitDiffHref = buildCommitDiffHref()
   const authored = formatCommitDate(detail?.authorDate ?? '')
   const committed = formatCommitDate(detail?.committerDate ?? '')
   // Only worth showing separately when the commit was not authored and
@@ -385,12 +339,35 @@ export function CommitDetailPanel({
               {detail.refs.length > 0 && (
                 <MetadataRow label="refs">
                   <span className="flex flex-wrap items-center gap-1.5">
-                    {detail.refs.map((refDecoration) => (
-                      <span key={refDecoration} className="inline-flex items-center gap-0.5">
-                        <RefPill refDecoration={refDecoration} />
-                        <CopyButton value={refName(refDecoration)} label="ref name" />
-                      </span>
-                    ))}
+                    {detail.refs.map((refDecoration) => {
+                      // Only a local branch can be compared against the default
+                      // base — a remote-tracking ref or a tag is not one the
+                      // server's branch listing validates.
+                      const branchName = refName(refDecoration)
+                      const refKind = classifyRef(refDecoration)
+                      const compareTo =
+                        refKind === 'branch' || refKind === 'head' ? buildCompareHref(branchName) : null
+                      return (
+                        <span key={refDecoration} className="inline-flex items-center gap-0.5">
+                          <RefPill refDecoration={refDecoration} />
+                          <CopyButton value={branchName} label="ref name" />
+                          {compareTo !== null && (
+                            // ADR-0031: the compare affordance sits on the branch
+                            // pill it acts on, not in global chrome.
+                            <a
+                              href={compareTo}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex shrink-0 cursor-pointer items-center rounded p-0.5 text-faint transition-colors hover:bg-rowhover hover:text-fg"
+                              title={`compare ${branchName} against the default branch in a new tab`}
+                              aria-label={`compare ${branchName} against the default branch in a new tab`}
+                            >
+                              <IconGitCompare size={13} aria-hidden />
+                            </a>
+                          )}
+                        </span>
+                      )
+                    })}
                   </span>
                 </MetadataRow>
               )}
@@ -401,6 +378,20 @@ export function CommitDetailPanel({
                 {detail.files.length} file{detail.files.length === 1 ? '' : 's'} changed
                 {detail.filesTruncated && ' (first 500)'}
               </span>
+              {commitDiffHref !== null && detail.files.length > 0 && (
+                // ADR-0031: opening the whole commit's diff belongs beside the
+                // file list it opens, not in remote chrome.
+                <a
+                  href={commitDiffHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex shrink-0 cursor-pointer items-center self-center rounded p-0.5 text-faint transition-colors hover:bg-rowhover hover:text-fg"
+                  title="open this commit's full diff in a new tab"
+                  aria-label="open this commit's full diff in a new tab"
+                >
+                  <IconExternalLink size={13} aria-hidden />
+                </a>
+              )}
               <span className="ml-auto font-mono text-[11px] tabular-nums">
                 {totalAdditions > 0 && <span className="text-[#7ee787]">+{totalAdditions}</span>}
                 {totalAdditions > 0 && totalDeletions > 0 && ' '}

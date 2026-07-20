@@ -49,6 +49,10 @@ function renderPanel(overrides: Partial<Parameters<typeof CommitDetailPanel>[0]>
       expandedFilePath={null}
       onToggleFile={(filePath) => toggled.push(filePath)}
       buildFileDiffHref={(filePath) => `/diff?repo=demo&hash=abc1234&path=${encodeURIComponent(filePath)}`}
+      buildCommitDiffHref={() => '/commit?repo=demo&hash=abc1234'}
+      buildCompareHref={(branchName) =>
+        branchName === 'main' ? null : `/compare?repo=demo&head=${encodeURIComponent(branchName)}`
+      }
       fileDiff={null}
       isLoadingFileDiff={false}
       fileDiffError={null}
@@ -167,5 +171,27 @@ describe('CommitDetailPanel open-in-new-tab affordance', () => {
   test('a binary row offers no new-tab link — nothing to diff', () => {
     renderPanel()
     expect(screen.queryByRole('link', { name: /assets\/logo\.png/ })).toBeNull()
+  })
+})
+
+describe('CommitDetailPanel full-commit and compare affordances', () => {
+  test('the file list links to the whole commit’s diff in a new tab', () => {
+    renderPanel()
+    const link = screen.getByRole('link', { name: /full diff in a new tab/i }) as HTMLAnchorElement
+    expect(link.getAttribute('href')).toBe('/commit?repo=demo&hash=abc1234')
+    expect(link.getAttribute('target')).toBe('_blank')
+  })
+
+  test('a non-default branch ref offers a compare link; the default branch does not', () => {
+    renderPanel({
+      detail: { ...commitDetail, refs: ['HEAD -> feature', 'main', 'tag: v1.0'] },
+    })
+    const compareLink = screen.getByRole('link', {
+      name: /compare feature against the default branch/i,
+    }) as HTMLAnchorElement
+    expect(compareLink.getAttribute('href')).toBe('/compare?repo=demo&head=feature')
+    // The default branch (main) and the tag are not comparable, so no link.
+    expect(screen.queryByRole('link', { name: /compare main against/i })).toBeNull()
+    expect(screen.queryByRole('link', { name: /compare v1\.0 against/i })).toBeNull()
   })
 })

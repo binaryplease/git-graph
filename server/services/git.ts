@@ -9,9 +9,18 @@ import {
   languageForPath,
   splitPatchIntoFileHunks,
 } from '../../shared/fileDiff'
+import {
+  COMPARE_FILE_DIFF_ARGUMENTS,
+  COMPARE_SUMMARY_ARGUMENTS,
+  compareRevisionArguments,
+} from '../../shared/compareDiff'
+import { parseCommitFileChanges } from '../../shared/commitDetail'
+import { FIELD_SEPARATOR } from '../../shared/gitLog'
 import type {
+  BranchList,
   CommitDetail,
   CommitLog,
+  CompareSummary,
   FileDiff,
   RepositoryList,
   RepositorySummary,
@@ -38,6 +47,24 @@ export type ReadFileDiffFailureReason = ReadCommitDetailFailureReason | 'unknown
 export type ReadFileDiffResult =
   | { ok: true; diff: FileDiff }
   | { ok: false; reason: ReadFileDiffFailureReason; detail?: string }
+
+export type ReadBranchesFailureReason = 'unknown-repository' | 'git-failed'
+
+export type ReadBranchesResult =
+  | { ok: true; branches: BranchList }
+  | { ok: false; reason: ReadBranchesFailureReason; detail?: string }
+
+export type ReadCompareFailureReason = 'unknown-repository' | 'unknown-ref' | 'git-failed'
+
+export type ReadCompareSummaryResult =
+  | { ok: true; summary: CompareSummary }
+  | { ok: false; reason: ReadCompareFailureReason; detail?: string }
+
+export type ReadCompareFileDiffFailureReason = ReadCompareFailureReason | 'unknown-file'
+
+export type ReadCompareFileDiffResult =
+  | { ok: true; diff: FileDiff }
+  | { ok: false; reason: ReadCompareFileDiffFailureReason; detail?: string }
 
 // Hashes reach `git show` as an argument, so they are re-checked here even
 // though the route schema already validates them — the service is the boundary
@@ -260,7 +287,225 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
     }
   }
 
-  return { listRepositories, readCommitLog, readCommitDetail, readFileDiff }
+  /**
+   * The default branch a comparison uses as its base when none is given: the
+   * target of `origin/HEAD` when a remote names one, otherwise `main`, then
+   * `master`, then the checked-out branch, then the first branch. Null only when
+   * the repository has no branches at all.
+   */
+  async function resolveDefaultBranch(
+    repositoryPath: string,
+    branchNames: string[],
+    currentBranch: string | null,
+  ): Promise<string | null> {
+    if (branchNames.length === 0) return null
+    const originHead = await runGit(repositoryPath, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
+    if (originHead.exitCode === 0) {
+      const originDefault = originHead.stdout.trim().replace(/^origin\//, '')
+      if (branchNames.includes(originDefault)) return originDefault
+    }
+    if (branchNames.includes('main')) return 'main'
+    if (branchNames.includes('master')) return 'master'
+    if (currentBranch && branchNames.includes(currentBranch)) return currentBranch
+    return branchNames[0] ?? null
+  }
+
+  /** Read a repository's local branch names, the checked-out one, and the default. */
+  async function readBranchData(repositoryPath: string) {
+    const { stdout, stderr, exitCode } = await runGit(repositoryPath, [
+      'for-each-ref',
+      `--format=%(refname:short)${FIELD_SEPARATOR}%(HEAD)`,
+      'refs/heads',
+    ])
+    if (exitCode !== 0) return { ok: false as const, detail: stderr.trim() }
+
+    const branchNames: string[] = []
+    let currentBranch: string | null = null
+    for (const line of stdout.split('\n')) {
+      if (!line.trim()) continue
+      const [name, headMarker] = line.split(FIELD_SEPARATOR)
+      if (!name) continue
+      branchNames.push(name)
+      if (headMarker?.trim() === '*') currentBranch = name
+    }
+    const defaultBranch = await resolveDefaultBranch(repositoryPath, branchNames, currentBranch)
+    return { ok: true as const, branchNames, currentBranch, defaultBranch }
+  }
+
+  /** List the local branches of one listed repository, default branch first. */
+  async function readBranches(repositoryRelativePath: string): Promise<ReadBranchesResult> {
+    const repository = await resolveRepository(repositoryRelativePath)
+    if (!repository) return { ok: false, reason: 'unknown-repository' }
+
+    const data = await readBranchData(join(servedRoot, repository.relativePath))
+    if (!data.ok) return { ok: false, reason: 'git-failed', detail: data.detail }
+
+    const branches = data.branchNames
+      .map((name) => ({
+        name,
+        isDefault: name === data.defaultBranch,
+        isCurrent: name === data.currentBranch,
+      }))
+      // Default first, then alphabetical — the base a compare picks by default
+      // is the one a reader most wants at the top of the list.
+      .sort((first, second) => {
+        if (first.isDefault !== second.isDefault) return first.isDefault ? -1 : 1
+        return first.name.localeCompare(second.name)
+      })
+
+    return {
+      ok: true,
+      branches: { repository: repository.name, defaultBranch: data.defaultBranch, branches },
+    }
+  }
+
+  /**
+   * Resolve and validate a comparison's endpoints. Both refs are checked by
+   * **membership** against the repository's own branch listing — the same
+   * discipline the file-diff path uses — so only names git itself produced ever
+   * reach the shell. An empty base means "the default branch".
+   */
+  async function resolveComparison(repositoryRelativePath: string, headRef: string, baseRef: string) {
+    const repository = await resolveRepository(repositoryRelativePath)
+    if (!repository) return { ok: false as const, reason: 'unknown-repository' as const }
+
+    const repositoryPath = join(servedRoot, repository.relativePath)
+    const data = await readBranchData(repositoryPath)
+    if (!data.ok) return { ok: false as const, reason: 'git-failed' as const, detail: data.detail }
+
+    const branchNames = new Set(data.branchNames)
+    const resolvedBase = baseRef || data.defaultBranch || ''
+    if (!resolvedBase || !branchNames.has(resolvedBase)) {
+      return { ok: false as const, reason: 'unknown-ref' as const, detail: `no such branch: ${resolvedBase || '(default)'}` }
+    }
+    if (!branchNames.has(headRef)) {
+      return { ok: false as const, reason: 'unknown-ref' as const, detail: `no such branch: ${headRef}` }
+    }
+
+    const mergeBaseResult = await runGit(repositoryPath, ['merge-base', resolvedBase, headRef])
+    const mergeBase = mergeBaseResult.exitCode === 0 ? mergeBaseResult.stdout.trim() : null
+    return { ok: true as const, repositoryPath, base: resolvedBase, head: headRef, mergeBase }
+  }
+
+  /**
+   * The files that differ between a branch and its base — the three-dot,
+   * merge-base comparison a pull request shows. Reuses the commit-detail file
+   * parser, since `git diff --raw --numstat` produces the same wire format.
+   */
+  async function readCompareSummary(
+    repositoryRelativePath: string,
+    headRef: string,
+    baseRef: string,
+  ): Promise<ReadCompareSummaryResult> {
+    const comparison = await resolveComparison(repositoryRelativePath, headRef, baseRef)
+    if (!comparison.ok) return comparison
+
+    const { repositoryPath, base, head, mergeBase } = comparison
+    const diff = await runGit(repositoryPath, [
+      ...COMPARE_SUMMARY_ARGUMENTS,
+      ...compareRevisionArguments(base, head, mergeBase !== null),
+      '--',
+    ])
+    if (diff.exitCode !== 0) return { ok: false, reason: 'git-failed', detail: diff.stderr.trim() }
+
+    const abbreviatedMergeBase = mergeBase
+      ? (await runGit(repositoryPath, ['rev-parse', '--short', mergeBase])).stdout.trim() || mergeBase.slice(0, 9)
+      : null
+    const { files, truncated } = parseCommitFileChanges(diff.stdout)
+    return {
+      ok: true,
+      summary: { base, head, mergeBase: abbreviatedMergeBase, files, filesTruncated: truncated },
+    }
+  }
+
+  /**
+   * The unified patch for one file of a branch comparison, plus both complete
+   * blobs the patch applies between. `filePath` is validated by membership
+   * against the comparison's own file listing, exactly as {@link readFileDiff}
+   * validates against a commit's listing. The old side is the merge-base blob,
+   * which is what makes the diff match the three-dot summary.
+   */
+  async function readCompareFileDiff(
+    repositoryRelativePath: string,
+    headRef: string,
+    baseRef: string,
+    filePath: string,
+  ): Promise<ReadCompareFileDiffResult> {
+    const comparison = await resolveComparison(repositoryRelativePath, headRef, baseRef)
+    if (!comparison.ok) return comparison
+
+    const { repositoryPath, base, head, mergeBase } = comparison
+    const summary = await runGit(repositoryPath, [
+      ...COMPARE_SUMMARY_ARGUMENTS,
+      ...compareRevisionArguments(base, head, mergeBase !== null),
+      '--',
+    ])
+    if (summary.exitCode !== 0) return { ok: false, reason: 'git-failed', detail: summary.stderr.trim() }
+
+    const { files } = parseCommitFileChanges(summary.stdout)
+    const fileChange = files.find(
+      (candidate) => candidate.path === filePath || candidate.previousPath === filePath,
+    )
+    if (!fileChange) return { ok: false, reason: 'unknown-file' }
+
+    // From here the paths handed to git are git's own strings, not the caller's.
+    const newPath = fileChange.path
+    const oldPath = fileChange.previousPath ?? fileChange.path
+    const oldRef = mergeBase ?? base
+    const pathArguments = fileChange.previousPath !== null ? [oldPath, newPath] : [newPath]
+
+    const base_: FileDiff = {
+      path: newPath,
+      previousPath: fileChange.previousPath,
+      status: fileChange.status,
+      hunks: [],
+      oldSource: null,
+      newSource: null,
+      language: languageForPath(newPath),
+      binary: fileChange.binary,
+      truncated: false,
+    }
+    if (fileChange.binary) return { ok: true, diff: base_ }
+
+    const patch = await runGit(repositoryPath, [
+      ...COMPARE_FILE_DIFF_ARGUMENTS,
+      ...compareRevisionArguments(base, head, mergeBase !== null),
+      '--',
+      ...pathArguments,
+    ])
+    if (patch.exitCode !== 0) return { ok: false, reason: 'git-failed', detail: patch.stderr.trim() }
+
+    const hasOldSide = fileChange.status !== 'added'
+    const hasNewSide = fileChange.status !== 'deleted'
+    const [oldBlob, newBlob] = await Promise.all([
+      hasOldSide ? runGit(repositoryPath, ['show', `${oldRef}:${oldPath}`]) : null,
+      hasNewSide ? runGit(repositoryPath, ['show', `${head}:${newPath}`]) : null,
+    ])
+
+    const oldSource = oldBlob?.exitCode === 0 ? oldBlob.stdout : null
+    const newSource = newBlob?.exitCode === 0 ? newBlob.stdout : null
+
+    const totalBytes =
+      Buffer.byteLength(patch.stdout) +
+      Buffer.byteLength(oldSource ?? '') +
+      Buffer.byteLength(newSource ?? '')
+    if (totalBytes > MAX_FILE_DIFF_BYTES) return { ok: true, diff: { ...base_, truncated: true } }
+
+    return {
+      ok: true,
+      diff: { ...base_, hunks: splitPatchIntoFileHunks(patch.stdout), oldSource, newSource },
+    }
+  }
+
+  return {
+    listRepositories,
+    readCommitLog,
+    readCommitDetail,
+    readFileDiff,
+    readBranches,
+    readCompareSummary,
+    readCompareFileDiff,
+  }
 }
 
 export type GitService = ReturnType<typeof createGitService>

@@ -1,14 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { IconGitMerge, IconSearch } from '@tabler/icons-react'
 import type {
+  BranchList,
   CommitDetail,
   CommitLog,
   FileDiff,
   GitCommit,
   RepositoryList,
 } from '../shared/git.schema'
-import { fetchCommitDetail, fetchCommitLog, fetchFileDiff, fetchRepositories } from './lib/api'
-import { fileDiffHref } from './lib/fileDiffLink'
+import {
+  fetchBranches,
+  fetchCommitDetail,
+  fetchCommitLog,
+  fetchFileDiff,
+  fetchRepositories,
+} from './lib/api'
+import { commitDiffHref, compareHref, fileDiffHref } from './lib/diffRoutes'
 import { loadHighlighter } from './lib/highlighter'
 import { CommitGraph, type CommitGraphStats } from './components/CommitGraph'
 import { CommitDetailPanel } from './components/CommitDetailPanel'
@@ -19,6 +26,10 @@ export function App() {
   // root itself is a repository), so "nothing selected" is null.
   const [selectedRepository, setSelectedRepository] = useState<string | null>(null)
   const [commitLog, setCommitLog] = useState<CommitLog | null>(null)
+  // Branches of the selected repository — the default one is the base a "compare
+  // against main" affordance diffs against, and knowing it lets the panel hide
+  // the affordance on the default branch itself.
+  const [branchList, setBranchList] = useState<BranchList | null>(null)
   const [isLoadingLog, setIsLoadingLog] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -78,6 +89,14 @@ export function App() {
       .finally(() => {
         if (!cancelled) setIsLoadingLog(false)
       })
+    // The branch listing drives the compare affordances; a failure there is not
+    // fatal to the graph, so it only clears the list rather than raising an error.
+    setBranchList(null)
+    fetchBranches(selectedRepository)
+      .then((list) => {
+        if (!cancelled) setBranchList(list)
+      })
+      .catch(() => {})
     // Deep-linkable selection with natural back-button-free history.
     const parameters = new URLSearchParams(location.search)
     parameters.set('repo', selectedRepository)
@@ -163,6 +182,25 @@ export function App() {
         ? null
         : fileDiffHref(selectedRepository, selectedCommitHash, filePath),
     [selectedRepository, selectedCommitHash],
+  )
+
+  const buildCommitDiffHref = useCallback(
+    () =>
+      selectedRepository === null || selectedCommitHash === null
+        ? null
+        : commitDiffHref(selectedRepository, selectedCommitHash),
+    [selectedRepository, selectedCommitHash],
+  )
+
+  const defaultBranch = branchList?.defaultBranch ?? null
+  const buildCompareHref = useCallback(
+    (branchName: string) => {
+      // Nothing to compare a branch against without a repository, and comparing
+      // the default branch against itself is always empty — skip both.
+      if (selectedRepository === null || branchName === defaultBranch) return null
+      return compareHref(selectedRepository, branchName)
+    },
+    [selectedRepository, defaultBranch],
   )
 
   const repositories = repositoryList?.repositories ?? []
@@ -316,6 +354,8 @@ export function App() {
               expandedFilePath={expandedFilePath}
               onToggleFile={handleToggleFile}
               buildFileDiffHref={buildFileDiffHref}
+              buildCommitDiffHref={buildCommitDiffHref}
+              buildCompareHref={buildCompareHref}
               fileDiff={fileDiff}
               isLoadingFileDiff={isLoadingFileDiff}
               fileDiffError={fileDiffError}

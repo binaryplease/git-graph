@@ -4,13 +4,20 @@ import {
   createGitService,
   type ReadCommitDetailFailureReason,
   type ReadCommitLogFailureReason,
+  type ReadCompareFailureReason,
+  type ReadCompareFileDiffFailureReason,
   type ReadFileDiffFailureReason,
 } from '../services/git'
 import {
+  BranchListQuerySchema,
+  BranchListSchema,
   CommitDetailQuerySchema,
   CommitDetailSchema,
   CommitLogQuerySchema,
   CommitLogSchema,
+  CompareFileDiffQuerySchema,
+  CompareQuerySchema,
+  CompareSummarySchema,
   FileDiffQuerySchema,
   FileDiffSchema,
   GitErrorSchema,
@@ -71,6 +78,32 @@ function fileDiffFailureStatusAndMessage(
     }
   }
   return detailFailureStatusAndMessage(reason, repositoryIdentifier, commitHash, detail)
+}
+
+function compareFailureStatusAndMessage(
+  reason: ReadCompareFileDiffFailureReason,
+  repositoryIdentifier: string,
+  head: string,
+  base: string,
+  filePath: string | null,
+  detail?: string,
+): { statusCode: 404 | 500; message: string } {
+  switch (reason) {
+    case 'unknown-repository':
+      return {
+        statusCode: 404,
+        message: `no such repository at the served root: ${repositoryIdentifier || '(root)'}`,
+      }
+    case 'unknown-ref':
+      return { statusCode: 404, message: detail || `no such branch in this repository` }
+    case 'unknown-file':
+      return {
+        statusCode: 404,
+        message: `comparing ${base || '(default)'}...${head} does not touch this file: ${filePath}`,
+      }
+    case 'git-failed':
+      return { statusCode: 500, message: `git diff failed: ${detail || 'unknown error'}` }
+  }
 }
 
 export const gitRoutes = new Elysia()
@@ -190,6 +223,105 @@ export const gitRoutes = new Elysia()
           'The requested `path` must be one the commit itself reports — validation is a ' +
           'membership check against git output, not a pattern — and an unrelated path is ' +
           'rejected with 404.',
+      },
+    },
+  )
+  .get(
+    '/api/git/branches',
+    async ({ query, status }) => {
+      const result = await gitService.readBranches(query.repo)
+      if (!result.ok) {
+        const { statusCode, message } = failureStatusAndMessage(result.reason, query.repo, result.detail)
+        return status(statusCode, { error: message })
+      }
+      return result.branches
+    },
+    {
+      query: BranchListQuerySchema,
+      response: {
+        200: BranchListSchema,
+        404: GitErrorSchema,
+        500: GitErrorSchema,
+      },
+      detail: {
+        tags: ['git'],
+        summary: 'List branches',
+        description:
+          'Lists the local branches of the identified repository with the default branch flagged ' +
+          'and sorted first. The default is `origin/HEAD` when a remote names one, otherwise `main`, ' +
+          '`master`, the checked-out branch, or the first branch — it is the base a comparison diffs ' +
+          'against when none is given.',
+      },
+    },
+  )
+  .get(
+    '/api/git/compare',
+    async ({ query, status }) => {
+      const result = await gitService.readCompareSummary(query.repo, query.head, query.base)
+      if (!result.ok) {
+        const { statusCode, message } = compareFailureStatusAndMessage(
+          result.reason,
+          query.repo,
+          query.head,
+          query.base,
+          null,
+          result.detail,
+        )
+        return status(statusCode, { error: message })
+      }
+      return result.summary
+    },
+    {
+      query: CompareQuerySchema,
+      response: {
+        200: CompareSummarySchema,
+        404: GitErrorSchema,
+        500: GitErrorSchema,
+      },
+      detail: {
+        tags: ['git'],
+        summary: 'Compare a branch against a base',
+        description:
+          'Returns the files that differ between `head` and `base` as a three-dot, merge-base ' +
+          'comparison — the "what does this branch add" view a pull request shows. An empty `base` ' +
+          'means the repository default branch. Both refs are validated by membership against the ' +
+          'branch listing; an unknown branch is rejected with 404.',
+      },
+    },
+  )
+  .get(
+    '/api/git/compare/diff',
+    async ({ query, status }) => {
+      const result = await gitService.readCompareFileDiff(query.repo, query.head, query.base, query.path)
+      if (!result.ok) {
+        const { statusCode, message } = compareFailureStatusAndMessage(
+          result.reason,
+          query.repo,
+          query.head,
+          query.base,
+          query.path,
+          result.detail,
+        )
+        return status(statusCode, { error: message })
+      }
+      return result.diff
+    },
+    {
+      query: CompareFileDiffQuerySchema,
+      response: {
+        200: FileDiffSchema,
+        404: GitErrorSchema,
+        500: GitErrorSchema,
+      },
+      detail: {
+        tags: ['git'],
+        summary: 'Diff one file of a branch comparison',
+        description:
+          'Returns the unified patch and both complete blobs for a single file of a `base...head` ' +
+          'comparison, mirroring the single-commit file-diff endpoint. The old side is the ' +
+          'merge-base blob, so the diff matches the three-dot summary. The requested `path` must be ' +
+          'one the comparison itself reports — a membership check, not a pattern — and an unrelated ' +
+          'path is rejected with 404.',
       },
     },
   )
