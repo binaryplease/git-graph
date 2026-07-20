@@ -199,125 +199,131 @@ export function App() {
     .join(' · ')
 
   return (
-    <div className="flex h-screen flex-col bg-canvas font-sans text-[13px] text-fg">
-      <header className="flex flex-wrap items-center gap-3.5 border-b border-line bg-raised px-4 py-2.5">
-        <div className="flex items-center gap-2 font-semibold">
-          <IconGitMerge size={20} className="text-accent" aria-hidden />
-          <span>
-            Git Graph <small className="font-normal text-faint">binp-git-graph</small>
-          </span>
-        </div>
-
-        <div className="ml-auto flex flex-wrap items-center gap-2.5">
-          <label className="flex items-center gap-1.5 text-dim">
-            repository
-            <select
-              className="rounded-md border border-line bg-canvas px-2 py-1 text-fg focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-45"
-              value={selectedRepository ?? ''}
-              disabled={repositories.length === 0}
-              // ADR-0025: disabled controls explain why, never vanish.
-              title={
-                repositories.length === 0
-                  ? 'no git repositories found at the served root — set GIT_GRAPH_ROOT'
-                  : undefined
-              }
-              onChange={(event) => setSelectedRepository(event.target.value)}
-            >
-              {repositories.length === 0 && <option value="">no repositories found</option>}
-              {repositories.map((repository) => (
-                <option key={repository.relativePath} value={repository.relativePath}>
-                  {repository.name}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <div className="relative flex items-center">
-            <IconSearch
-              size={15}
-              className="pointer-events-none absolute left-2 text-faint"
-              aria-hidden
-            />
-            <input
-              type="text"
-              className="w-60 rounded-md border border-line bg-canvas py-1 pr-2 pl-7 text-fg placeholder:text-faint focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-45"
-              placeholder={
-                hasCommits ? 'fuzzy search subject / hash / author' : 'load commits to search'
-              }
-              disabled={!hasCommits}
-              title={hasCommits ? undefined : 'search enables once a repository with commits is loaded'}
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              autoComplete="off"
-              spellCheck={false}
-            />
+    // The standalone shell is capped at 1440×900 and centred: the graph is a
+    // dense, fixed-width-ish reading surface, so letting it stretch across an
+    // ultrawide display only pushes the readout away from the rows. Below the
+    // cap it fills the viewport as before.
+    <div className="flex h-screen w-screen items-center justify-center bg-backdrop">
+      <div className="flex h-full max-h-[900px] w-full max-w-[1440px] flex-col overflow-hidden rounded-lg border border-line bg-canvas font-sans text-[13px] text-fg shadow-2xl shadow-black/60">
+        <header className="flex flex-wrap items-center gap-3.5 border-b border-line bg-raised px-4 py-2.5">
+          <div className="flex items-center gap-2 font-semibold">
+            <IconGitMerge size={20} className="text-accent" aria-hidden />
+            <span>
+              Git Graph <small className="font-normal text-faint">binp-git-graph</small>
+            </span>
           </div>
 
-          <span className="text-faint tabular-nums">{readout}</span>
-        </div>
-      </header>
+          <div className="ml-auto flex flex-wrap items-center gap-2.5">
+            <label className="flex items-center gap-1.5 text-dim">
+              repository
+              <select
+                className="rounded-md border border-line bg-canvas px-2 py-1 text-fg focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-45"
+                value={selectedRepository ?? ''}
+                disabled={repositories.length === 0}
+                // ADR-0025: disabled controls explain why, never vanish.
+                title={
+                  repositories.length === 0
+                    ? 'no git repositories found at the served root — set GIT_GRAPH_ROOT'
+                    : undefined
+                }
+                onChange={(event) => setSelectedRepository(event.target.value)}
+              >
+                {repositories.length === 0 && <option value="">no repositories found</option>}
+                {repositories.map((repository) => (
+                  <option key={repository.relativePath} value={repository.relativePath}>
+                    {repository.name}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-      <main className="flex min-h-0 flex-1">
-        <div className="relative min-w-0 flex-1 overflow-auto">
-        {loadError !== null && (
-          <p className="px-4 py-6 text-[#ff7b72]">
-            {loadError}
-          </p>
-        )}
-        {loadError === null && repositoryList !== null && repositories.length === 0 && (
-          <p className="px-4 py-6 text-faint">
-            No git repositories found under{' '}
-            <code className="font-mono text-dim">{repositoryList.rootPath}</code>. Point the server
-            at a projects folder: set <code className="font-mono text-dim">GIT_GRAPH_ROOT</code> or
-            run <code className="font-mono text-dim">bun server/index.ts ~/projects</code>.
-          </p>
-        )}
-        {loadError === null && selectedRepository !== null && !isLoadingLog && commitLog !== null && !hasCommits && (
-          <p className="px-4 py-6 text-faint">This repository has no commits yet.</p>
-        )}
-        {loadError === null && isLoadingLog && commitLog === null && (
-          <p className="px-4 py-6 text-faint">Loading commit history…</p>
-        )}
-        {loadError === null && hasCommits && (
-          <CommitGraph
-            commits={commits}
-            searchQuery={searchQuery.trim()}
-            onStats={handleGraphStats}
-            selectedHash={selectedCommitHash}
-            onSelectCommit={handleSelectCommit}
-          />
-        )}
-        </div>
+            <div className="relative flex items-center">
+              <IconSearch
+                size={15}
+                className="pointer-events-none absolute left-2 text-faint"
+                aria-hidden
+              />
+              <input
+                type="text"
+                className="w-60 rounded-md border border-line bg-canvas py-1 pr-2 pl-7 text-fg placeholder:text-faint focus:border-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-45"
+                placeholder={
+                  hasCommits ? 'fuzzy search subject / hash / author' : 'load commits to search'
+                }
+                disabled={!hasCommits}
+                title={hasCommits ? undefined : 'search enables once a repository with commits is loaded'}
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
 
-        {selectedCommitHash !== null && (
-          <CommitDetailPanel
-            detail={commitDetail}
-            isLoading={isLoadingDetail}
-            error={detailError}
-            requestedHash={selectedCommitHash}
-            onSelectCommit={setSelectedCommitHash}
-            isCommitLoaded={isCommitLoaded}
-            expandedFilePath={expandedFilePath}
-            onToggleFile={handleToggleFile}
-            fileDiff={fileDiff}
-            isLoadingFileDiff={isLoadingFileDiff}
-            fileDiffError={fileDiffError}
-            onClose={() => setSelectedCommitHash(null)}
-          />
-        )}
-      </main>
+            <span className="text-faint tabular-nums">{readout}</span>
+          </div>
+        </header>
 
-      <footer className="flex flex-wrap gap-4 border-t border-line bg-raised px-4 py-1.5 text-[11.5px] text-faint">
-        <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block h-[9px] w-[9px] rounded-full bg-accent" /> commit
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block h-[9px] w-[9px] rounded-full border-2 border-dim" /> merge
-          (2+ parents)
-        </span>
-        <span>color = lane / branch column</span>
-        {graphStats.matchCount === 0 && hasCommits && <span>no rows match your search</span>}
-      </footer>
+        <main className="flex min-h-0 flex-1">
+          <div className="relative min-w-0 flex-1 overflow-auto">
+          {loadError !== null && (
+            <p className="px-4 py-6 text-[#ff7b72]">
+              {loadError}
+            </p>
+          )}
+          {loadError === null && repositoryList !== null && repositories.length === 0 && (
+            <p className="px-4 py-6 text-faint">
+              No git repositories found under{' '}
+              <code className="font-mono text-dim">{repositoryList.rootPath}</code>. Point the server
+              at a projects folder: set <code className="font-mono text-dim">GIT_GRAPH_ROOT</code> or
+              run <code className="font-mono text-dim">bun server/index.ts ~/projects</code>.
+            </p>
+          )}
+          {loadError === null && selectedRepository !== null && !isLoadingLog && commitLog !== null && !hasCommits && (
+            <p className="px-4 py-6 text-faint">This repository has no commits yet.</p>
+          )}
+          {loadError === null && isLoadingLog && commitLog === null && (
+            <p className="px-4 py-6 text-faint">Loading commit history…</p>
+          )}
+          {loadError === null && hasCommits && (
+            <CommitGraph
+              commits={commits}
+              searchQuery={searchQuery.trim()}
+              onStats={handleGraphStats}
+              selectedHash={selectedCommitHash}
+              onSelectCommit={handleSelectCommit}
+            />
+          )}
+          </div>
+
+          {selectedCommitHash !== null && (
+            <CommitDetailPanel
+              detail={commitDetail}
+              isLoading={isLoadingDetail}
+              error={detailError}
+              requestedHash={selectedCommitHash}
+              onSelectCommit={setSelectedCommitHash}
+              isCommitLoaded={isCommitLoaded}
+              expandedFilePath={expandedFilePath}
+              onToggleFile={handleToggleFile}
+              fileDiff={fileDiff}
+              isLoadingFileDiff={isLoadingFileDiff}
+              fileDiffError={fileDiffError}
+              onClose={() => setSelectedCommitHash(null)}
+            />
+          )}
+        </main>
+
+        <footer className="flex flex-wrap gap-4 border-t border-line bg-raised px-4 py-1.5 text-[11.5px] text-faint">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block h-[9px] w-[9px] rounded-full bg-accent" /> commit
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block h-[9px] w-[9px] rounded-full border-2 border-dim" /> merge
+            (2+ parents)
+          </span>
+          <span>color = lane / branch column</span>
+          {graphStats.matchCount === 0 && hasCommits && <span>no rows match your search</span>}
+        </footer>
+      </div>
     </div>
   )
 }
