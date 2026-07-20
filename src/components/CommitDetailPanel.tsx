@@ -1,9 +1,10 @@
-import type { ReactNode } from 'react'
+import type { MouseEvent, ReactNode } from 'react'
 import {
   IconArrowRight,
   IconBinary,
   IconChevronDown,
   IconChevronRight,
+  IconExternalLink,
   IconFileDiff,
   IconFileMinus,
   IconFilePlus,
@@ -24,6 +25,13 @@ import { RefPill, refName } from './RefPill'
 // files out. Like CommitGraph it fetches nothing and owns no app chrome — the
 // host passes a loaded detail, a loading flag, or an error, so this component
 // can be lifted into another host as-is.
+
+// The new-tab modifier is Cmd on Apple platforms, Ctrl elsewhere — name the one
+// the user actually presses in the tooltip rather than listing both.
+const MODIFIER_HINT =
+  typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+    ? 'Cmd'
+    : 'Ctrl'
 
 const STATUS_ICONS: Record<FileChangeStatus, typeof IconFileDiff> = {
   added: IconFilePlus,
@@ -71,6 +79,11 @@ type FileChangeRowProps = {
   file: CommitFileChange
   isExpanded: boolean
   onToggle: () => void
+  /**
+   * The standalone diff-tab URL for this file, or null when the host cannot
+   * build one (no commit context) or the file has no diff to open (binary).
+   */
+  diffHref: string | null
   /** The diff for this file — only ever non-null while this row is the expanded one. */
   diff: FileDiffPayload | null
   isLoadingDiff: boolean
@@ -78,13 +91,17 @@ type FileChangeRowProps = {
 }
 
 /**
- * One changed file, and its diff as a disclosure. ADR-0031: the affordance that
- * opens a file's diff sits on that file's row, not in the panel header.
+ * One changed file, and its diff as a disclosure. ADR-0031: the affordances that
+ * open a file's diff sit on that file's row, not in the panel header. A plain
+ * click discloses the diff inline; cmd/ctrl/middle-click — and the adjacent
+ * external-link control — open it in a new tab, the way VS Code's Git Graph
+ * opens a file diff in its own editor tab.
  */
 function FileChangeRow({
   file,
   isExpanded,
   onToggle,
+  diffHref,
   diff,
   isLoadingDiff,
   diffError,
@@ -97,6 +114,16 @@ function FileChangeRow({
   const ChevronIcon = isExpanded ? IconChevronDown : IconChevronRight
   const diffBodyId = `file-diff-${file.path.replace(/[^\w-]/g, '_')}`
 
+  // A modified/ctrl/cmd/middle-click opens the diff in a new tab instead of
+  // toggling it inline; a plain click keeps the inline disclosure.
+  function handleToggleClick(clickEvent: MouseEvent<HTMLButtonElement>) {
+    if (diffHref !== null && (clickEvent.metaKey || clickEvent.ctrlKey)) {
+      window.open(diffHref, '_blank', 'noopener,noreferrer')
+      return
+    }
+    onToggle()
+  }
+
   return (
     <li className="rounded">
       <div className="group flex items-center gap-1 rounded px-1 py-1 hover:bg-rowhover">
@@ -105,7 +132,7 @@ function FileChangeRow({
         <button
           type="button"
           className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded text-left disabled:cursor-not-allowed disabled:opacity-60"
-          onClick={onToggle}
+          onClick={handleToggleClick}
           disabled={file.binary}
           aria-expanded={isExpanded}
           aria-controls={isExpanded ? diffBodyId : undefined}
@@ -113,7 +140,7 @@ function FileChangeRow({
           title={
             file.binary
               ? `${description} — binary, git reports no line-by-line diff to show`
-              : `${description} — click to ${isExpanded ? 'hide' : 'show'} the diff`
+              : `${description} — click to ${isExpanded ? 'hide' : 'show'} the diff, ${MODIFIER_HINT}-click to open it in a new tab`
           }
         >
           <ChevronIcon size={13} className="shrink-0 text-faint" aria-hidden />
@@ -129,6 +156,38 @@ function FileChangeRow({
             {file.path}
           </span>
         </button>
+        {/* ADR-0025: a real, keyboard-reachable control for the new-tab action —
+            not only the mouse-only modifier gesture — sitting beside the file it
+            opens (ADR-0031). Disabled, not hidden, when there is no diff to open. */}
+        {diffHref !== null ? (
+          <a
+            href={diffHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex shrink-0 cursor-pointer items-center rounded p-0.5 text-faint transition-colors hover:bg-rowhover hover:text-fg"
+            title={`open ${file.path} diff in a new tab`}
+            aria-label={`open ${file.path} diff in a new tab`}
+          >
+            <IconExternalLink size={14} aria-hidden />
+          </a>
+        ) : (
+          <span
+            className="inline-flex shrink-0 items-center rounded p-0.5 text-faint opacity-45"
+            title={
+              file.binary
+                ? `${file.path} is binary — git reports no line-by-line diff to open`
+                : `${file.path} diff cannot be opened in a new tab here`
+            }
+            aria-label={
+              file.binary
+                ? `${file.path} is binary, no diff to open in a new tab`
+                : `${file.path} diff cannot be opened in a new tab`
+            }
+            role="img"
+          >
+            <IconExternalLink size={14} aria-hidden />
+          </span>
+        )}
         <CopyButton value={file.path} label="file path" />
         {file.binary ? (
           <IconBinary size={13} className="shrink-0 text-faint" aria-label="binary file" />
@@ -176,6 +235,13 @@ export type CommitDetailPanelProps = {
    */
   expandedFilePath: string | null
   onToggleFile: (filePath: string) => void
+  /**
+   * The standalone diff-tab URL for a file of this commit, or null when the host
+   * has no commit context to build one. The host owns the route scheme; the
+   * panel only turns the string into links (ADR-0031: the affordance sits on the
+   * row it opens).
+   */
+  buildFileDiffHref: (filePath: string) => string | null
   /** The diff for {@link expandedFilePath}; the host owns the fetching. */
   fileDiff: FileDiffPayload | null
   isLoadingFileDiff: boolean
@@ -192,6 +258,7 @@ export function CommitDetailPanel({
   isCommitLoaded,
   expandedFilePath,
   onToggleFile,
+  buildFileDiffHref,
   fileDiff,
   isLoadingFileDiff,
   fileDiffError,
@@ -357,6 +424,8 @@ export function CommitDetailPanel({
                       file={file}
                       isExpanded={isExpanded}
                       onToggle={() => onToggleFile(file.path)}
+                      // Binary files have no line-by-line diff to open.
+                      diffHref={file.binary ? null : buildFileDiffHref(file.path)}
                       diff={isExpanded ? fileDiff : null}
                       isLoadingDiff={isExpanded && isLoadingFileDiff}
                       diffError={isExpanded ? fileDiffError : null}

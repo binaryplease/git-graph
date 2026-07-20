@@ -8,8 +8,9 @@ import { loadHighlighter } from '../lib/highlighter'
 // nothing and owns no app chrome: a loaded payload, a loading flag or an error
 // comes in, rows go out, so the component lifts into another host as-is.
 //
-// Unified mode, because the panel is docked beside the graph and rarely has the
-// width for two columns.
+// The layout is a prop: the docked panel keeps the default unified, wrapped view
+// (it rarely has the width for two columns), while the standalone diff tab, with
+// a full window, opts into a side-by-side layout.
 
 type DiffBuild =
   | { state: 'pending' }
@@ -21,6 +22,14 @@ export type FileDiffProps = {
   diff: FileDiffPayload | null
   isLoading: boolean
   error: string | null
+  /**
+   * Presentation, defaulted to the docked panel's cramped-column settings.
+   * The standalone diff tab has a full window, so it overrides these to a
+   * side-by-side, unwrapped, slightly larger view.
+   */
+  mode?: 'unified' | 'split'
+  wrap?: boolean
+  fontSize?: number
 }
 
 /**
@@ -38,7 +47,14 @@ function Notice({ children }: { children: ReactNode }) {
   return <p className="px-2 py-1.5 text-[11.5px] text-faint">{children}</p>
 }
 
-export function FileDiff({ diff, isLoading, error }: FileDiffProps) {
+export function FileDiff({
+  diff,
+  isLoading,
+  error,
+  mode = 'unified',
+  wrap = true,
+  fontSize = 11.5,
+}: FileDiffProps) {
   const [build, setBuild] = useState<DiffBuild>({ state: 'pending' })
 
   // Building is the expensive step — tokenizing both complete files runs on the
@@ -66,7 +82,10 @@ export function FileDiff({ diff, isLoading, error }: FileDiffProps) {
         })
         diffViewFile.initRaw()
         diffViewFile.initSyntax({ registerHighlighter: highlighter })
+        // Build both layouts so switching `mode` never needs a costly rebuild —
+        // the DiffView just reads whichever the mode selects.
         diffViewFile.buildUnifiedDiffLines()
+        diffViewFile.buildSplitDiffLines()
         setBuild({ state: 'ready', diffViewFile })
       })
       .catch((buildError: Error) => {
@@ -98,11 +117,11 @@ export function FileDiff({ diff, isLoading, error }: FileDiffProps) {
           scrollbar per file makes reading a diff a chore. */}
       <DiffView
         diffFile={build.diffViewFile}
-        diffViewMode={DiffModeEnum.Unified}
+        diffViewMode={mode === 'split' ? DiffModeEnum.Split : DiffModeEnum.Unified}
         diffViewTheme="dark"
         diffViewHighlight
-        diffViewWrap
-        diffViewFontSize={11.5}
+        diffViewWrap={wrap}
+        diffViewFontSize={fontSize}
       />
     </div>
   )

@@ -8,6 +8,7 @@ import type {
   RepositoryList,
 } from '../shared/git.schema'
 import { fetchCommitDetail, fetchCommitLog, fetchFileDiff, fetchRepositories } from './lib/api'
+import { fileDiffHref } from './lib/fileDiffLink'
 import { loadHighlighter } from './lib/highlighter'
 import { CommitGraph, type CommitGraphStats } from './components/CommitGraph'
 import { CommitDetailPanel } from './components/CommitDetailPanel'
@@ -153,6 +154,16 @@ export function App() {
 
   const handleGraphStats = useCallback((stats: CommitGraphStats) => setGraphStats(stats), [])
   const handleSelectCommit = useCallback((commit: GitCommit) => setSelectedCommitHash(commit.hash), [])
+
+  // The app shell owns the route scheme (App.tsx does all fetching and routing);
+  // the panel only turns these strings into links for the file it opens.
+  const buildFileDiffHref = useCallback(
+    (filePath: string) =>
+      selectedRepository === null || selectedCommitHash === null
+        ? null
+        : fileDiffHref(selectedRepository, selectedCommitHash, filePath),
+    [selectedRepository, selectedCommitHash],
+  )
 
   const repositories = repositoryList?.repositories ?? []
   const commits = commitLog?.commits ?? []
@@ -304,6 +315,7 @@ export function App() {
               isCommitLoaded={isCommitLoaded}
               expandedFilePath={expandedFilePath}
               onToggleFile={handleToggleFile}
+              buildFileDiffHref={buildFileDiffHref}
               fileDiff={fileDiff}
               isLoadingFileDiff={isLoadingFileDiff}
               fileDiffError={fileDiffError}

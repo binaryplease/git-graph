@@ -48,6 +48,7 @@ function renderPanel(overrides: Partial<Parameters<typeof CommitDetailPanel>[0]>
       isCommitLoaded={() => true}
       expandedFilePath={null}
       onToggleFile={(filePath) => toggled.push(filePath)}
+      buildFileDiffHref={(filePath) => `/diff?repo=demo&hash=abc1234&path=${encodeURIComponent(filePath)}`}
       fileDiff={null}
       isLoadingFileDiff={false}
       fileDiffError={null}
@@ -106,5 +107,65 @@ describe('CommitDetailPanel file disclosure', () => {
   test('only the expanded file gets a diff body', () => {
     renderPanel({ expandedFilePath: 'src/App.tsx', isLoadingFileDiff: true })
     expect(screen.getAllByText('Loading diff…')).toHaveLength(1)
+  })
+})
+
+describe('CommitDetailPanel open-in-new-tab affordance', () => {
+  /** The row's visible new-tab control is the link naming the file. */
+  const openLinkFor = (filePath: string) =>
+    screen.getByRole('link', {
+      name: new RegExp(filePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    })
+
+  test('a non-binary row exposes a new-tab link to that file’s diff route', () => {
+    renderPanel()
+    const link = openLinkFor('src/App.tsx') as HTMLAnchorElement
+    expect(link.getAttribute('href')).toBe('/diff?repo=demo&hash=abc1234&path=src%2FApp.tsx')
+    expect(link.getAttribute('target')).toBe('_blank')
+    expect(link.getAttribute('rel')).toContain('noopener')
+  })
+
+  test('cmd/ctrl-clicking a row opens the diff in a new tab instead of toggling', () => {
+    const { toggled } = renderPanel()
+    const openedUrls: string[] = []
+    const originalOpen = window.open
+    window.open = ((url?: string | URL) => {
+      openedUrls.push(String(url))
+      return null
+    }) as typeof window.open
+    try {
+      fireEvent.click(toggleFor('src/App.tsx'), { metaKey: true })
+      fireEvent.click(toggleFor('src/App.tsx'), { ctrlKey: true })
+    } finally {
+      window.open = originalOpen
+    }
+    expect(openedUrls).toEqual([
+      '/diff?repo=demo&hash=abc1234&path=src%2FApp.tsx',
+      '/diff?repo=demo&hash=abc1234&path=src%2FApp.tsx',
+    ])
+    // A modified click must not also toggle the inline disclosure.
+    expect(toggled).toEqual([])
+  })
+
+  test('a plain click still toggles inline and opens no tab', () => {
+    const { toggled } = renderPanel()
+    const openedUrls: string[] = []
+    const originalOpen = window.open
+    window.open = ((url?: string | URL) => {
+      openedUrls.push(String(url))
+      return null
+    }) as typeof window.open
+    try {
+      fireEvent.click(toggleFor('src/App.tsx'))
+    } finally {
+      window.open = originalOpen
+    }
+    expect(openedUrls).toEqual([])
+    expect(toggled).toEqual(['src/App.tsx'])
+  })
+
+  test('a binary row offers no new-tab link — nothing to diff', () => {
+    renderPanel()
+    expect(screen.queryByRole('link', { name: /assets\/logo\.png/ })).toBeNull()
   })
 })
