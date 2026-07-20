@@ -1,9 +1,11 @@
 import {
   CommitDetailSchema,
   CommitLogSchema,
+  FileDiffSchema,
   RepositoryListSchema,
   type CommitDetail,
   type CommitLog,
+  type FileDiff,
   type RepositoryList,
 } from '../../shared/git.schema'
 
@@ -43,4 +45,17 @@ export async function fetchCommitDetail(
 ): Promise<CommitDetail> {
   const query = new URLSearchParams({ repo: repositoryRelativePath, hash: commitHash })
   return CommitDetailSchema.parse(await requestJson(`/api/git/commit?${query}`))
+}
+
+export async function fetchFileDiff(
+  repositoryRelativePath: string,
+  commitHash: string,
+  filePath: string,
+): Promise<FileDiff> {
+  const query = new URLSearchParams({
+    repo: repositoryRelativePath,
+    hash: commitHash,
+    path: filePath,
+  })
+  return FileDiffSchema.parse(await requestJson(`/api/git/diff?${query}`))
 }

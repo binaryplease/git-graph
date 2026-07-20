@@ -1,0 +1,3 @@
+[test]
+# Component tests need a DOM before any module that touches one is imported.
+preload = ["./src/test/setup.ts"]

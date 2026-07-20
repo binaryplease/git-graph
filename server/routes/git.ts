@@ -4,12 +4,15 @@ import {
   createGitService,
   type ReadCommitDetailFailureReason,
   type ReadCommitLogFailureReason,
+  type ReadFileDiffFailureReason,
 } from '../services/git'
 import {
   CommitDetailQuerySchema,
   CommitDetailSchema,
   CommitLogQuerySchema,
   CommitLogSchema,
+  FileDiffQuerySchema,
+  FileDiffSchema,
   GitErrorSchema,
   RepositoryListSchema,
 } from '../../shared/git.schema'
@@ -52,6 +55,22 @@ function detailFailureStatusAndMessage(
     case 'git-failed':
       return { statusCode: 500, message: `git show failed: ${detail || 'unknown error'}` }
   }
+}
+
+function fileDiffFailureStatusAndMessage(
+  reason: ReadFileDiffFailureReason,
+  repositoryIdentifier: string,
+  commitHash: string,
+  filePath: string,
+  detail?: string,
+): { statusCode: 400 | 404 | 500; message: string } {
+  if (reason === 'unknown-file') {
+    return {
+      statusCode: 404,
+      message: `commit ${commitHash} does not touch this file: ${filePath}`,
+    }
+  }
+  return detailFailureStatusAndMessage(reason, repositoryIdentifier, commitHash, detail)
 }
 
 export const gitRoutes = new Elysia()
@@ -131,6 +150,46 @@ export const gitRoutes = new Elysia()
           'The repository must be present in the listing (404 otherwise), and the hash must be ' +
           'hexadecimal — a malformed one is rejected by query validation with 422 before it can ' +
           'reach git.',
+      },
+    },
+  )
+  .get(
+    '/api/git/diff',
+    async ({ query, status }) => {
+      const result = await gitService.readFileDiff(query.repo, query.hash, query.path)
+      if (!result.ok) {
+        const { statusCode, message } = fileDiffFailureStatusAndMessage(
+          result.reason,
+          query.repo,
+          query.hash,
+          query.path,
+          result.detail,
+        )
+        return status(statusCode, { error: message })
+      }
+      return result.diff
+    },
+    {
+      query: FileDiffQuerySchema,
+      response: {
+        200: FileDiffSchema,
+        400: GitErrorSchema,
+        404: GitErrorSchema,
+        500: GitErrorSchema,
+      },
+      detail: {
+        tags: ['git'],
+        summary: 'Diff one file of one commit',
+        description:
+          'Returns the unified patch for a single file together with both complete blobs the ' +
+          'patch applies between, so a client can syntax-highlight whole files instead of ' +
+          'highlighting each line in isolation. `oldSource` is null for an added file or a root ' +
+          'commit and `newSource` is null for a deletion; a binary file returns no patch and no ' +
+          'sources, and an oversized diff comes back with `truncated: true` and nothing else. ' +
+          'For a merge the diff is taken against the first parent, matching the commit endpoint. ' +
+          'The requested `path` must be one the commit itself reports — validation is a ' +
+          'membership check against git output, not a pattern — and an unrelated path is ' +
+          'rejected with 404.',
       },
     },
   )

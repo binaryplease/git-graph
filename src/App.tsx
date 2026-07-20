@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { IconGitMerge, IconSearch } from '@tabler/icons-react'
-import type { CommitDetail, CommitLog, GitCommit, RepositoryList } from '../shared/git.schema'
-import { fetchCommitDetail, fetchCommitLog, fetchRepositories } from './lib/api'
+import type {
+  CommitDetail,
+  CommitLog,
+  FileDiff,
+  GitCommit,
+  RepositoryList,
+} from '../shared/git.schema'
+import { fetchCommitDetail, fetchCommitLog, fetchFileDiff, fetchRepositories } from './lib/api'
+import { loadHighlighter } from './lib/highlighter'
 import { CommitGraph, type CommitGraphStats } from './components/CommitGraph'
 import { CommitDetailPanel } from './components/CommitDetailPanel'
 
@@ -25,6 +32,21 @@ export function App() {
   const [commitDetail, setCommitDetail] = useState<CommitDetail | null>(null)
   const [isLoadingDetail, setIsLoadingDetail] = useState(false)
   const [detailError, setDetailError] = useState<string | null>(null)
+  // The file whose diff is open in the panel, and the diff fetched for it —
+  // same shape as the commit selection above, one level down.
+  const [expandedFilePath, setExpandedFilePath] = useState<string | null>(null)
+  const [fileDiff, setFileDiff] = useState<FileDiff | null>(null)
+  const [isLoadingFileDiff, setIsLoadingFileDiff] = useState(false)
+  const [fileDiffError, setFileDiffError] = useState<string | null>(null)
+
+  // Loading a syntax grammar the first time a diff is expanded costs about half
+  // a second; warming the highlighter here spends it while nobody is waiting.
+  useEffect(() => {
+    loadHighlighter().catch(() => {
+      // A failed warm-up is not an app-level error — FileDiff retries on expand
+      // and reports the failure where the diff would have been.
+    })
+  }, [])
 
   useEffect(() => {
     fetchRepositories()
@@ -93,6 +115,41 @@ export function App() {
       cancelled = true
     }
   }, [selectedRepository, selectedCommitHash])
+
+  // Selecting another commit invalidates the open file — its path belongs to
+  // the previous commit's listing.
+  useEffect(() => setExpandedFilePath(null), [selectedCommitHash])
+
+  // Fetch the diff of whatever file is expanded.
+  useEffect(() => {
+    if (selectedRepository === null || selectedCommitHash === null || expandedFilePath === null) {
+      setFileDiff(null)
+      setFileDiffError(null)
+      return
+    }
+    let cancelled = false
+    setIsLoadingFileDiff(true)
+    setFileDiffError(null)
+    setFileDiff(null)
+    fetchFileDiff(selectedRepository, selectedCommitHash, expandedFilePath)
+      .then((diff) => {
+        if (!cancelled) setFileDiff(diff)
+      })
+      .catch((error: Error) => {
+        if (!cancelled) setFileDiffError(error.message)
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingFileDiff(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedRepository, selectedCommitHash, expandedFilePath])
+
+  const handleToggleFile = useCallback(
+    (filePath: string) => setExpandedFilePath((current) => (current === filePath ? null : filePath)),
+    [],
+  )
 
   const handleGraphStats = useCallback((stats: CommitGraphStats) => setGraphStats(stats), [])
   const handleSelectCommit = useCallback((commit: GitCommit) => setSelectedCommitHash(commit.hash), [])
@@ -240,6 +297,11 @@ export function App() {
             requestedHash={selectedCommitHash}
             onSelectCommit={setSelectedCommitHash}
             isCommitLoaded={isCommitLoaded}
+            expandedFilePath={expandedFilePath}
+            onToggleFile={handleToggleFile}
+            fileDiff={fileDiff}
+            isLoadingFileDiff={isLoadingFileDiff}
+            fileDiffError={fileDiffError}
             onClose={() => setSelectedCommitHash(null)}
           />
         )}

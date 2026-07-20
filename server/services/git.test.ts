@@ -250,3 +250,104 @@ describe('readCommitDetail', () => {
     })
   })
 })
+
+describe('readFileDiff', () => {
+  const service = () => createGitService({ rootAbsolutePath: scratchRoot })
+
+  async function hashOfCommit(subject: string) {
+    const log = await service().readCommitLog('files-repo', { limit: 100 })
+    if (!log.ok) throw new Error(`expected ok, got ${log.reason}`)
+    const commit = log.log.commits.find((candidate) => candidate.subject === subject)
+    if (!commit) throw new Error(`no commit with subject ${subject}`)
+    return commit.hash
+  }
+
+  async function diffOf(subject: string, filePath: string) {
+    const result = await service().readFileDiff('files-repo', await hashOfCommit(subject), filePath)
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+    return result.diff
+  }
+
+  test('returns the patch and both complete blobs for a modified file', async () => {
+    const diff = await diffOf('main commit', 'a.txt')
+    expect(diff.status).toBe('modified')
+    expect(diff.oldSource).toBe('one\n')
+    expect(diff.newSource).toBe('one\ntwo\n')
+    expect(diff.hunks).toHaveLength(1)
+    expect(diff.hunks[0]).toContain('+two')
+    expect(diff.language).toBe('txt')
+    expect(diff.binary).toBe(false)
+    expect(diff.truncated).toBe(false)
+  })
+
+  test('an added file on a root commit has no old side and does not error', async () => {
+    const diff = await diffOf('first commit', 'a.txt')
+    expect(diff.status).toBe('added')
+    expect(diff.oldSource).toBeNull()
+    expect(diff.newSource).toBe('one\n')
+    expect(diff.hunks[0]).toContain('new file mode')
+  })
+
+  test('a deleted file has no new side', async () => {
+    const diff = await diffOf('rename, delete, binary', 'b.txt')
+    expect(diff.status).toBe('deleted')
+    expect(diff.oldSource).toBe('from the side\n')
+    expect(diff.newSource).toBeNull()
+  })
+
+  test('a rename reads the old side at the previous path', async () => {
+    const diff = await diffOf('rename, delete, binary', 'renamed.txt')
+    expect(diff.status).toBe('renamed')
+    expect(diff.previousPath).toBe('a.txt')
+    expect(diff.oldSource).toBe('one\ntwo\n')
+    expect(diff.newSource).toBe('one\ntwo\nthree\n')
+  })
+
+  test('a rename can also be requested by its previous path', async () => {
+    const diff = await diffOf('rename, delete, binary', 'a.txt')
+    expect(diff.path).toBe('renamed.txt')
+    expect(diff.previousPath).toBe('a.txt')
+  })
+
+  test('a binary file carries no patch and no sources', async () => {
+    const diff = await diffOf('rename, delete, binary', 'blob.bin')
+    expect(diff.binary).toBe(true)
+    expect(diff.hunks).toEqual([])
+    expect(diff.oldSource).toBeNull()
+    expect(diff.newSource).toBeNull()
+  })
+
+  test('a merge diffs against the first parent, matching the commit endpoint', async () => {
+    const diff = await diffOf('merge side', 'b.txt')
+    expect(diff.status).toBe('added')
+    expect(diff.newSource).toBe('from the side\n')
+    expect(diff.hunks[0]).toContain('+from the side')
+  })
+
+  test('rejects a path the commit does not touch (the membership guard)', async () => {
+    const commitHash = await hashOfCommit('main commit')
+    for (const outsidePath of [
+      'b.txt', // exists in the repository, but not in this commit
+      '../../etc/passwd',
+      '.git/config',
+      '--output=/tmp/pwned',
+      'a.txt ',
+    ]) {
+      expect(await service().readFileDiff('files-repo', commitHash, outsidePath)).toEqual({
+        ok: false,
+        reason: 'unknown-file',
+      })
+    }
+  })
+
+  test('rejects a bad hash and an unknown repository before reaching git', async () => {
+    expect(await service().readFileDiff('files-repo', 'HEAD', 'a.txt')).toEqual({
+      ok: false,
+      reason: 'invalid-hash',
+    })
+    expect(await service().readFileDiff('nope', 'deadbeef', 'a.txt')).toEqual({
+      ok: false,
+      reason: 'unknown-repository',
+    })
+  })
+})

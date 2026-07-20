@@ -2,14 +2,22 @@ import type { ReactNode } from 'react'
 import {
   IconArrowRight,
   IconBinary,
+  IconChevronDown,
+  IconChevronRight,
   IconFileDiff,
   IconFileMinus,
   IconFilePlus,
   IconFileUnknown,
   IconX,
 } from '@tabler/icons-react'
-import type { CommitDetail, CommitFileChange, FileChangeStatus } from '../../shared/git.schema'
+import type {
+  CommitDetail,
+  CommitFileChange,
+  FileChangeStatus,
+  FileDiff as FileDiffPayload,
+} from '../../shared/git.schema'
 import { CopyButton } from './CopyButton'
+import { FileDiff } from './FileDiff'
 import { RefPill, refName } from './RefPill'
 
 // The commit detail surface: one commit in, its metadata, message and changed
@@ -59,42 +67,92 @@ function MetadataRow({ label, children }: { label: string; children: ReactNode }
   )
 }
 
-function FileChangeRow({ file }: { file: CommitFileChange }) {
+type FileChangeRowProps = {
+  file: CommitFileChange
+  isExpanded: boolean
+  onToggle: () => void
+  /** The diff for this file — only ever non-null while this row is the expanded one. */
+  diff: FileDiffPayload | null
+  isLoadingDiff: boolean
+  diffError: string | null
+}
+
+/**
+ * One changed file, and its diff as a disclosure. ADR-0031: the affordance that
+ * opens a file's diff sits on that file's row, not in the panel header.
+ */
+function FileChangeRow({
+  file,
+  isExpanded,
+  onToggle,
+  diff,
+  isLoadingDiff,
+  diffError,
+}: FileChangeRowProps) {
   const StatusIcon = STATUS_ICONS[file.status]
   const description =
     file.previousPath !== null
       ? `${file.status}: ${file.previousPath} → ${file.path}`
       : `${file.status}: ${file.path}`
+  const ChevronIcon = isExpanded ? IconChevronDown : IconChevronRight
+  const diffBodyId = `file-diff-${file.path.replace(/[^\w-]/g, '_')}`
+
   return (
-    <li className="group flex items-center gap-2 rounded px-2 py-1 hover:bg-rowhover" title={description}>
-      <StatusIcon
-        size={14}
-        className={`shrink-0 ${STATUS_COLORS[file.status]}`}
-        aria-label={file.status}
-      />
-      <span className="min-w-0 flex-1 truncate font-mono text-[11.5px]">
-        {file.previousPath !== null && (
-          <span className="text-faint line-through">{file.previousPath} </span>
+    <li className="rounded">
+      <div className="group flex items-center gap-1 rounded px-1 py-1 hover:bg-rowhover">
+        {/* The copy control is a button of its own, so the toggle can only own
+            the path itself — buttons do not nest. */}
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded text-left disabled:cursor-not-allowed disabled:opacity-60"
+          onClick={onToggle}
+          disabled={file.binary}
+          aria-expanded={isExpanded}
+          aria-controls={isExpanded ? diffBodyId : undefined}
+          // ADR-0025: a binary row keeps its toggle, visible and explained.
+          title={
+            file.binary
+              ? `${description} — binary, git reports no line-by-line diff to show`
+              : `${description} — click to ${isExpanded ? 'hide' : 'show'} the diff`
+          }
+        >
+          <ChevronIcon size={13} className="shrink-0 text-faint" aria-hidden />
+          <StatusIcon
+            size={14}
+            className={`shrink-0 ${STATUS_COLORS[file.status]}`}
+            aria-label={file.status}
+          />
+          <span className="min-w-0 flex-1 truncate font-mono text-[11.5px]">
+            {file.previousPath !== null && (
+              <span className="text-faint line-through">{file.previousPath} </span>
+            )}
+            {file.path}
+          </span>
+        </button>
+        <CopyButton value={file.path} label="file path" />
+        {file.binary ? (
+          <IconBinary size={13} className="shrink-0 text-faint" aria-label="binary file" />
+        ) : (
+          <span className="shrink-0 font-mono text-[11px] tabular-nums">
+            {file.additions !== null && file.additions > 0 && (
+              <span className="text-[#7ee787]">+{file.additions}</span>
+            )}
+            {file.additions !== null &&
+              file.additions > 0 &&
+              file.deletions !== null &&
+              file.deletions > 0 &&
+              ' '}
+            {file.deletions !== null && file.deletions > 0 && (
+              <span className="text-[#ff7b72]">−{file.deletions}</span>
+            )}
+          </span>
         )}
-        {file.path}
-      </span>
-      <CopyButton value={file.path} label="file path" />
-      {file.binary ? (
-        <IconBinary size={13} className="shrink-0 text-faint" aria-label="binary file" />
-      ) : (
-        <span className="shrink-0 font-mono text-[11px] tabular-nums">
-          {file.additions !== null && file.additions > 0 && (
-            <span className="text-[#7ee787]">+{file.additions}</span>
-          )}
-          {file.additions !== null &&
-            file.additions > 0 &&
-            file.deletions !== null &&
-            file.deletions > 0 &&
-            ' '}
-          {file.deletions !== null && file.deletions > 0 && (
-            <span className="text-[#ff7b72]">−{file.deletions}</span>
-          )}
-        </span>
+      </div>
+
+      {isExpanded && (
+        <div id={diffBodyId} className="mt-1 mb-2 ml-1">
+          <FileDiff diff={diff} isLoading={isLoadingDiff} error={diffError} />
+        </div>
       )}
     </li>
   )
@@ -111,6 +169,17 @@ export type CommitDetailPanelProps = {
   onSelectCommit: (commitHash: string) => void
   /** Parent hashes that are not among the loaded commits cannot be navigated to. */
   isCommitLoaded: (commitHash: string) => boolean
+  /**
+   * Path of the file whose diff is open, or null. One at a time: the panel is
+   * narrow, and building a diff costs real time, so opening a second file
+   * closes the first rather than stacking work nobody is looking at.
+   */
+  expandedFilePath: string | null
+  onToggleFile: (filePath: string) => void
+  /** The diff for {@link expandedFilePath}; the host owns the fetching. */
+  fileDiff: FileDiffPayload | null
+  isLoadingFileDiff: boolean
+  fileDiffError: string | null
   onClose: () => void
 }
 
@@ -121,6 +190,11 @@ export function CommitDetailPanel({
   requestedHash,
   onSelectCommit,
   isCommitLoaded,
+  expandedFilePath,
+  onToggleFile,
+  fileDiff,
+  isLoadingFileDiff,
+  fileDiffError,
   onClose,
 }: CommitDetailPanelProps) {
   const authored = formatCommitDate(detail?.authorDate ?? '')
@@ -137,7 +211,13 @@ export function CommitDetailPanel({
 
   return (
     <aside
-      className="flex w-[26rem] shrink-0 flex-col overflow-hidden border-l border-line bg-raised"
+      // Metadata reads fine at 26rem, wrapped code does not. The panel widens
+      // for the file that is open and gives the width back when it closes —
+      // capped, because a narrow window would otherwise leave the graph too
+      // thin to show a commit subject.
+      className={`flex shrink-0 flex-col overflow-hidden border-l border-line bg-raised transition-[width] duration-150 ${
+        expandedFilePath !== null ? 'w-[44rem] max-w-[55vw]' : 'w-[26rem]'
+      }`}
       aria-label="Commit details"
     >
       <header className="flex items-start gap-2 border-b border-line px-3 py-2">
@@ -268,10 +348,21 @@ export function CommitDetailPanel({
                   : 'This commit changed no files.'}
               </p>
             ) : (
-              <ul className="mt-1 -ml-2">
-                {detail.files.map((file) => (
-                  <FileChangeRow key={`${file.previousPath ?? ''}${file.path}`} file={file} />
-                ))}
+              <ul className="mt-1 -ml-1">
+                {detail.files.map((file) => {
+                  const isExpanded = expandedFilePath === file.path
+                  return (
+                    <FileChangeRow
+                      key={`${file.previousPath ?? ''}${file.path}`}
+                      file={file}
+                      isExpanded={isExpanded}
+                      onToggle={() => onToggleFile(file.path)}
+                      diff={isExpanded ? fileDiff : null}
+                      isLoadingDiff={isExpanded && isLoadingFileDiff}
+                      diffError={isExpanded ? fileDiffError : null}
+                    />
+                  )
+                })}
               </ul>
             )}
           </>

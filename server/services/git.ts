@@ -3,7 +3,19 @@ import { readdir } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import { COMMIT_LOG_ARGUMENTS, parseGitLog } from '../../shared/gitLog'
 import { COMMIT_DETAIL_ARGUMENTS, parseCommitDetail } from '../../shared/commitDetail'
-import type { CommitDetail, CommitLog, RepositoryList, RepositorySummary } from '../../shared/git.schema'
+import {
+  FILE_DIFF_ARGUMENTS,
+  MAX_FILE_DIFF_BYTES,
+  languageForPath,
+  splitPatchIntoFileHunks,
+} from '../../shared/fileDiff'
+import type {
+  CommitDetail,
+  CommitLog,
+  FileDiff,
+  RepositoryList,
+  RepositorySummary,
+} from '../../shared/git.schema'
 
 export type ReadCommitLogFailureReason = 'unknown-repository' | 'git-failed'
 
@@ -20,6 +32,12 @@ export type ReadCommitDetailFailureReason =
 export type ReadCommitDetailResult =
   | { ok: true; detail: CommitDetail }
   | { ok: false; reason: ReadCommitDetailFailureReason; detail?: string }
+
+export type ReadFileDiffFailureReason = ReadCommitDetailFailureReason | 'unknown-file'
+
+export type ReadFileDiffResult =
+  | { ok: true; diff: FileDiff }
+  | { ok: false; reason: ReadFileDiffFailureReason; detail?: string }
 
 // Hashes reach `git show` as an argument, so they are re-checked here even
 // though the route schema already validates them — the service is the boundary
@@ -148,7 +166,101 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
     return { ok: true, detail: parsed }
   }
 
-  return { listRepositories, readCommitLog, readCommitDetail }
+  /**
+   * The unified patch for one file of one commit, plus both complete blobs the
+   * patch applies between.
+   *
+   * `filePath` is untrusted input, and it is validated by **membership**, not
+   * by pattern: the commit's own file listing is read first and the request is
+   * rejected unless git itself named this path (or named it as the source of a
+   * rename). That makes the guard a lookup against data git produced, which no
+   * regex can match for strength. The path is still passed after `--`, and the
+   * hash still goes through {@link COMMIT_HASH_PATTERN}.
+   */
+  async function readFileDiff(
+    repositoryRelativePath: string,
+    commitHash: string,
+    filePath: string,
+  ): Promise<ReadFileDiffResult> {
+    const repository = await resolveRepository(repositoryRelativePath)
+    if (!repository) return { ok: false, reason: 'unknown-repository' }
+
+    const detailResult = await readCommitDetail(repositoryRelativePath, commitHash)
+    if (!detailResult.ok) return detailResult
+
+    const { detail } = detailResult
+    const fileChange = detail.files.find(
+      (candidate) => candidate.path === filePath || candidate.previousPath === filePath,
+    )
+    if (!fileChange) return { ok: false, reason: 'unknown-file' }
+
+    // From here on the paths handed to git are git's own strings, not the
+    // caller's. The old side of a rename lives at the previous path.
+    const newPath = fileChange.path
+    const oldPath = fileChange.previousPath ?? fileChange.path
+    const repositoryPath = join(servedRoot, repository.relativePath)
+    const pathArguments = fileChange.previousPath !== null ? [oldPath, newPath] : [newPath]
+
+    const base: FileDiff = {
+      path: newPath,
+      previousPath: fileChange.previousPath,
+      status: fileChange.status,
+      hunks: [],
+      oldSource: null,
+      newSource: null,
+      language: languageForPath(newPath),
+      binary: fileChange.binary,
+      truncated: false,
+    }
+
+    // A binary file has no line diff and no source worth sending; the row stays
+    // in the listing and the client explains why it cannot be expanded.
+    if (fileChange.binary) return { ok: true, diff: base }
+
+    const patch = await runGit(repositoryPath, [
+      ...FILE_DIFF_ARGUMENTS,
+      commitHash,
+      '--',
+      ...pathArguments,
+    ])
+    if (patch.exitCode !== 0) {
+      return { ok: false, reason: 'git-failed', detail: patch.stderr.trim() }
+    }
+
+    // `git show <hash>^:<path>` fails for an added file and for a root commit —
+    // both mean "no blob on the old side", not an error. Same on the new side
+    // for a deletion.
+    const hasOldSide = fileChange.status !== 'added' && detail.parents.length > 0
+    const hasNewSide = fileChange.status !== 'deleted'
+    const [oldBlob, newBlob] = await Promise.all([
+      hasOldSide ? runGit(repositoryPath, ['show', `${commitHash}^:${oldPath}`]) : null,
+      hasNewSide ? runGit(repositoryPath, ['show', `${commitHash}:${newPath}`]) : null,
+    ])
+
+    const oldSource = oldBlob?.exitCode === 0 ? oldBlob.stdout : null
+    const newSource = newBlob?.exitCode === 0 ? newBlob.stdout : null
+
+    const totalBytes =
+      Buffer.byteLength(patch.stdout) +
+      Buffer.byteLength(oldSource ?? '') +
+      Buffer.byteLength(newSource ?? '')
+    // Over the cap the payload is dropped whole rather than clipped: the client
+    // highlights complete files, so a clipped blob would highlight the wrong
+    // thing rather than merely showing less.
+    if (totalBytes > MAX_FILE_DIFF_BYTES) return { ok: true, diff: { ...base, truncated: true } }
+
+    return {
+      ok: true,
+      diff: {
+        ...base,
+        hunks: splitPatchIntoFileHunks(patch.stdout),
+        oldSource,
+        newSource,
+      },
+    }
+  }
+
+  return { listRepositories, readCommitLog, readCommitDetail, readFileDiff }
 }
 
 export type GitService = ReturnType<typeof createGitService>

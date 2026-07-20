@@ -149,6 +149,70 @@ export const CommitDetailQuerySchema = z.object({
 })
 export type CommitDetailQuery = z.infer<typeof CommitDetailQuerySchema>
 
+export const FileDiffSchema = z.object({
+  path: z.string().min(1).describe('Repository-relative path of the file after the change.'),
+  previousPath: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe('Path before a rename or copy; null for every other status (ADR-0024).'),
+  status: FileChangeStatusSchema.default('unknown'),
+  hunks: z
+    .array(z.string())
+    .default([])
+    .describe(
+      'The unified patch for this file, one entry per `diff --git` block — normally exactly ' +
+        'one. Empty when the file is binary or the diff was too large to return.',
+    ),
+  oldSource: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe(
+      'Complete file contents at the parent commit, or null when there is no parent blob — ' +
+        'an added file, a root commit, a binary file, or a truncated diff. Whole-file content ' +
+        'is what lets the client tokenize with continuation state instead of line by line.',
+    ),
+  newSource: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe('Complete file contents at this commit, or null for a deleted, binary or truncated file.'),
+  language: z
+    .string()
+    .default('txt')
+    .describe('Highlighter language derived from the path; `txt` when the extension is unknown.'),
+  binary: z
+    .boolean()
+    .default(false)
+    .describe('True when git cannot diff the file by line — the client shows no diff body.'),
+  truncated: z
+    .boolean()
+    .default(false)
+    .describe('True when the file diff exceeded the size the service will return, so it was omitted.'),
+})
+export type FileDiff = z.infer<typeof FileDiffSchema>
+
+export const FileDiffQuerySchema = z.object({
+  repo: z
+    .string()
+    .default('')
+    .describe('Repository identifier: the `relativePath` from the repository listing.'),
+  hash: z
+    .string()
+    .regex(/^[0-9a-fA-F]{4,40}$/, 'must be an abbreviated or full hexadecimal commit hash')
+    .describe('Commit the diff is taken at — the `hash` of a row in the commit log.'),
+  path: z
+    .string()
+    .min(1)
+    .describe(
+      'Repository-relative path of the file to diff. Validated by membership: it must be one ' +
+        'of the paths the commit itself reports (or the `previousPath` of a rename), never by ' +
+        'pattern.',
+    ),
+})
+export type FileDiffQuery = z.infer<typeof FileDiffQuerySchema>
+
 export const GitErrorSchema = z.object({
   error: z.string().describe('Human-readable description of what went wrong.'),
 })
