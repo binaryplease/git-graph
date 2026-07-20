@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createGitService } from './git'
@@ -44,6 +44,31 @@ beforeAll(() => {
   runGit(repositoryPath, 'tag', 'v1.0')
 
   runGit(scratchRoot, 'init', '-b', 'main', join(scratchRoot, 'empty-repo'))
+
+  // A second repository with real file content, for the commit-detail tests:
+  // a merge that brings in a file, then a rename plus a binary addition.
+  const filesRepositoryPath = join(scratchRoot, 'files-repo')
+  const writeFile = (fileName: string, contents: string | Uint8Array) =>
+    writeFileSync(join(filesRepositoryPath, fileName), contents)
+  runGit(scratchRoot, 'init', '-b', 'main', filesRepositoryPath)
+  writeFile('a.txt', 'one\n')
+  runGit(filesRepositoryPath, 'add', '-A')
+  runGit(filesRepositoryPath, 'commit', '-m', 'first commit')
+  runGit(filesRepositoryPath, 'checkout', '-b', 'side')
+  writeFile('b.txt', 'from the side\n')
+  runGit(filesRepositoryPath, 'add', '-A')
+  runGit(filesRepositoryPath, 'commit', '-m', 'side commit', '-m', 'A body line.\n\nAnd a second paragraph.')
+  runGit(filesRepositoryPath, 'checkout', 'main')
+  writeFile('a.txt', 'one\ntwo\n')
+  runGit(filesRepositoryPath, 'add', '-A')
+  runGit(filesRepositoryPath, 'commit', '-m', 'main commit')
+  runGit(filesRepositoryPath, 'merge', '--no-ff', '-m', 'merge side', 'side')
+  runGit(filesRepositoryPath, 'mv', 'a.txt', 'renamed.txt')
+  writeFile('renamed.txt', 'one\ntwo\nthree\n')
+  writeFile('blob.bin', new Uint8Array([0, 1, 2, 3, 0, 255]))
+  runGit(filesRepositoryPath, 'rm', '-q', 'b.txt')
+  runGit(filesRepositoryPath, 'add', '-A')
+  runGit(filesRepositoryPath, 'commit', '-m', 'rename, delete, binary')
 })
 
 afterAll(() => {
@@ -61,6 +86,7 @@ describe('createGitService', () => {
     expect(rootPath).toBe(scratchRoot)
     expect(repositories).toEqual([
       { name: 'empty-repo', relativePath: 'empty-repo' },
+      { name: 'files-repo', relativePath: 'files-repo' },
       { name: 'sample-repo', relativePath: 'sample-repo' },
     ])
   })
@@ -121,5 +147,106 @@ describe('createGitService', () => {
       const result = await service.readCommitLog(hostileIdentifier, { limit: 10 })
       expect(result).toEqual({ ok: false, reason: 'unknown-repository' })
     }
+  })
+})
+
+describe('readCommitDetail', () => {
+  const service = () => createGitService({ rootAbsolutePath: scratchRoot })
+
+  /** Look up a commit of files-repo by subject, the way the UI looks it up by row. */
+  async function hashOfCommit(subject: string) {
+    const log = await service().readCommitLog('files-repo', { limit: 100 })
+    if (!log.ok) throw new Error(`expected ok, got ${log.reason}`)
+    const commit = log.log.commits.find((candidate) => candidate.subject === subject)
+    if (!commit) throw new Error(`no commit with subject ${subject}`)
+    return commit.hash
+  }
+
+  test('describes a commit with its metadata, body and changed files', async () => {
+    const result = await service().readCommitDetail('files-repo', await hashOfCommit('side commit'))
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+
+    const { detail } = result
+    expect(detail.fullHash).toMatch(/^[0-9a-f]{40}$/)
+    expect(detail.hash).toBe(detail.fullHash.slice(0, detail.hash.length))
+    expect(detail.parents).toHaveLength(1)
+    expect(detail.author).toBe('Test')
+    expect(detail.authorEmail).toBe('test@example.invalid')
+    expect(detail.authorDate).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+    expect(detail.subject).toBe('side commit')
+    expect(detail.body).toBe('A body line.\n\nAnd a second paragraph.')
+    expect(detail.filesTruncated).toBe(false)
+    expect(detail.files).toEqual([
+      { path: 'b.txt', previousPath: null, status: 'added', additions: 1, deletions: 0, binary: false },
+    ])
+  })
+
+  test('shows what a merge brought in, diffing against the first parent', async () => {
+    const result = await service().readCommitDetail('files-repo', await hashOfCommit('merge side'))
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+    expect(result.detail.parents).toHaveLength(2)
+    expect(result.detail.files.map((file) => file.path)).toEqual(['b.txt'])
+  })
+
+  test('reports renames, deletions and binaries', async () => {
+    const result = await service().readCommitDetail(
+      'files-repo',
+      await hashOfCommit('rename, delete, binary'),
+    )
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+
+    const byPath = new Map(result.detail.files.map((file) => [file.path, file]))
+    expect(byPath.get('renamed.txt')).toEqual({
+      path: 'renamed.txt',
+      previousPath: 'a.txt',
+      status: 'renamed',
+      additions: 1,
+      deletions: 0,
+      binary: false,
+    })
+    expect(byPath.get('b.txt')!.status).toBe('deleted')
+    expect(byPath.get('blob.bin')).toEqual({
+      path: 'blob.bin',
+      previousPath: null,
+      status: 'added',
+      additions: null,
+      deletions: null,
+      binary: true,
+    })
+  })
+
+  test('carries the refs pointing at the commit', async () => {
+    const result = await service().readCommitDetail(
+      'files-repo',
+      await hashOfCommit('rename, delete, binary'),
+    )
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+    expect(result.detail.refs).toContain('HEAD -> main')
+  })
+
+  test('reports a root commit as parentless', async () => {
+    const result = await service().readCommitDetail('files-repo', await hashOfCommit('first commit'))
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+    expect(result.detail.parents).toEqual([])
+  })
+
+  test('rejects a hash that is not hexadecimal before reaching git', async () => {
+    for (const hostileHash of ['--upload-pack=touch /tmp/pwned', '../../etc/passwd', 'HEAD', '']) {
+      expect(await service().readCommitDetail('files-repo', hostileHash)).toEqual({
+        ok: false,
+        reason: 'invalid-hash',
+      })
+    }
+  })
+
+  test('reports an unknown commit and an unknown repository distinctly', async () => {
+    expect(await service().readCommitDetail('files-repo', 'deadbeef')).toEqual({
+      ok: false,
+      reason: 'unknown-commit',
+    })
+    expect(await service().readCommitDetail('nope', 'deadbeef')).toEqual({
+      ok: false,
+      reason: 'unknown-repository',
+    })
   })
 })

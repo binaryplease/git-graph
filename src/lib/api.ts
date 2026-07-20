@@ -1,6 +1,8 @@
 import {
+  CommitDetailSchema,
   CommitLogSchema,
   RepositoryListSchema,
+  type CommitDetail,
   type CommitLog,
   type RepositoryList,
 } from '../../shared/git.schema'
@@ -33,4 +35,12 @@ export async function fetchCommitLog(
 ): Promise<CommitLog> {
   const query = new URLSearchParams({ repo: repositoryRelativePath, limit: String(limit) })
   return CommitLogSchema.parse(await requestJson(`/api/git/log?${query}`))
+}
+
+export async function fetchCommitDetail(
+  repositoryRelativePath: string,
+  commitHash: string,
+): Promise<CommitDetail> {
+  const query = new URLSearchParams({ repo: repositoryRelativePath, hash: commitHash })
+  return CommitDetailSchema.parse(await requestJson(`/api/git/commit?${query}`))
 }

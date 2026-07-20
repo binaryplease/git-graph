@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import type { GitCommit } from '../../shared/git.schema'
 import { computeGraphLayout } from '../../shared/graphLayout'
 import { fuzzyHighlight, type FuzzyHighlight } from '../../shared/fuzzy'
+import { RefPill } from './RefPill'
 
 // The reusable commit-graph view: commits in, SVG + rows out. It owns no data
 // fetching and no app chrome, so it can be lifted into another host
@@ -39,17 +40,6 @@ function edgePath(childLane: number, childRow: number, parentLane: number, paren
   return path
 }
 
-type RefKind = 'head' | 'branch' | 'remote' | 'tag'
-
-function classifyRef(ref: string): RefKind {
-  if (ref.startsWith('HEAD')) return 'head'
-  if (ref.startsWith('tag:')) return 'tag'
-  if (ref.startsWith('origin/') || ref.startsWith('remotes/')) return 'remote'
-  return 'branch'
-}
-
-const refDisplayLabel = (ref: string) => (ref.startsWith('tag:') ? ref.replace(/^tag:\s*/, '') : ref)
-
 /** Matched-character highlighting (ADR-0019): matched runs render as <mark>. */
 function FuzzySegments({ highlight }: { highlight: FuzzyHighlight }) {
   return (
@@ -78,9 +68,19 @@ export type CommitGraphProps = {
   searchQuery?: string
   /** Reports derived numbers for host chrome (readouts). Pass a stable callback. */
   onStats?: (stats: CommitGraphStats) => void
+  /** Hash of the highlighted row; null when nothing is selected. */
+  selectedHash?: string | null
+  /** Called when a row is activated by click or keyboard. */
+  onSelectCommit?: (commit: GitCommit) => void
 }
 
-export function CommitGraph({ commits, searchQuery = '', onStats }: CommitGraphProps) {
+export function CommitGraph({
+  commits,
+  searchQuery = '',
+  onStats,
+  selectedHash = null,
+  onSelectCommit,
+}: CommitGraphProps) {
   const layout = useMemo(() => computeGraphLayout(commits), [commits])
   const visibleHashes = useMemo(() => new Set(commits.map((commit) => commit.hash)), [commits])
 
@@ -117,6 +117,15 @@ export function CommitGraph({ commits, searchQuery = '', onStats }: CommitGraphP
     rowsContainerRef.current?.children[firstMatchRow]?.scrollIntoView({ block: 'center' })
   }, [searchQuery, firstMatchRow])
 
+  // Keep the selected row reachable when selection moves from outside the list
+  // (keyboard, or following a parent hash from the detail panel). `nearest`
+  // means clicking a row that is already visible never scrolls the graph.
+  const selectedRow = selectedHash === null ? -1 : commits.findIndex((commit) => commit.hash === selectedHash)
+  useEffect(() => {
+    if (selectedRow < 0) return
+    rowsContainerRef.current?.children[selectedRow]?.scrollIntoView({ block: 'nearest' })
+  }, [selectedRow])
+
   const graphWidth = X_OFFSET * 2 + Math.max(0, layout.laneCount - 1) * LANE_GAP
   const totalHeight = commits.length * ROW_HEIGHT
 
@@ -137,6 +146,18 @@ export function CommitGraph({ commits, searchQuery = '', onStats }: CommitGraphP
             strokeWidth={2}
           />
         ))}
+        {/* Halo marking the selected commit's node, drawn under the nodes. */}
+        {selectedRow >= 0 && (
+          <circle
+            cx={laneX(layout.placements[selectedRow]!.lane)}
+            cy={rowY(selectedRow)}
+            r={NODE_RADIUS + 4}
+            fill="none"
+            stroke={laneColor(layout.placements[selectedRow]!.lane)}
+            strokeWidth={1.5}
+            opacity={0.55}
+          />
+        )}
         {commits.map((commit, row) => {
           const lane = layout.placements[row]!.lane
           const isMerge =
@@ -157,19 +178,20 @@ export function CommitGraph({ commits, searchQuery = '', onStats }: CommitGraphP
 
       <div ref={rowsContainerRef} className="relative">
         {rows.map(({ commit, subject, hash, author, matched }, row) => (
-          <div
+          <button
             key={`${commit.hash}-${row}`}
-            className={`flex items-center gap-2 pr-4 whitespace-nowrap hover:bg-rowhover ${
-              searchQuery && !matched ? 'opacity-25 hover:opacity-60' : ''
-            }`}
+            type="button"
+            aria-current={commit.hash === selectedHash ? 'true' : undefined}
+            className={`flex w-full cursor-pointer items-center gap-2 pr-4 text-left whitespace-nowrap hover:bg-rowhover ${
+              commit.hash === selectedHash ? 'bg-rowselected' : ''
+            } ${searchQuery && !matched ? 'opacity-25 hover:opacity-60' : ''}`}
             style={{ height: ROW_HEIGHT, paddingLeft: graphWidth + 8 }}
+            onClick={() => onSelectCommit?.(commit)}
           >
             {commit.refs.length > 0 && (
               <span className="inline-flex shrink-0 gap-1.5">
-                {commit.refs.map((ref) => (
-                  <span key={ref} className={`ref-pill ref-${classifyRef(ref)}`}>
-                    {refDisplayLabel(ref)}
-                  </span>
+                {commit.refs.map((refDecoration) => (
+                  <RefPill key={refDecoration} refDecoration={refDecoration} />
                 ))}
               </span>
             )}
@@ -185,7 +207,7 @@ export function CommitGraph({ commits, searchQuery = '', onStats }: CommitGraphP
               <span className="mx-1.5 opacity-40">·</span>
               {commit.date}
             </span>
-          </div>
+          </button>
         ))}
       </div>
     </div>

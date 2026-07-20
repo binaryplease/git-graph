@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { IconGitMerge, IconSearch } from '@tabler/icons-react'
-import type { CommitLog, RepositoryList } from '../shared/git.schema'
-import { fetchCommitLog, fetchRepositories } from './lib/api'
+import type { CommitDetail, CommitLog, GitCommit, RepositoryList } from '../shared/git.schema'
+import { fetchCommitDetail, fetchCommitLog, fetchRepositories } from './lib/api'
 import { CommitGraph, type CommitGraphStats } from './components/CommitGraph'
+import { CommitDetailPanel } from './components/CommitDetailPanel'
 
 export function App() {
   const [repositoryList, setRepositoryList] = useState<RepositoryList | null>(null)
@@ -17,6 +18,13 @@ export function App() {
     laneCount: 0,
     matchCount: null,
   })
+  // The commit whose details are open. The hash is the selection; the detail is
+  // fetched for it, so the panel can show the hash while the payload is in
+  // flight and after a failure.
+  const [selectedCommitHash, setSelectedCommitHash] = useState<string | null>(null)
+  const [commitDetail, setCommitDetail] = useState<CommitDetail | null>(null)
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
 
   useEffect(() => {
     fetchRepositories()
@@ -56,11 +64,72 @@ export function App() {
     }
   }, [selectedRepository])
 
+  // Switching repositories invalidates any open commit — its hash belongs to
+  // the previous history.
+  useEffect(() => setSelectedCommitHash(null), [selectedRepository])
+
+  // Fetch the details of whatever commit is selected.
+  useEffect(() => {
+    if (selectedRepository === null || selectedCommitHash === null) {
+      setCommitDetail(null)
+      setDetailError(null)
+      return
+    }
+    let cancelled = false
+    setIsLoadingDetail(true)
+    setDetailError(null)
+    setCommitDetail(null)
+    fetchCommitDetail(selectedRepository, selectedCommitHash)
+      .then((detail) => {
+        if (!cancelled) setCommitDetail(detail)
+      })
+      .catch((error: Error) => {
+        if (!cancelled) setDetailError(error.message)
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingDetail(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedRepository, selectedCommitHash])
+
   const handleGraphStats = useCallback((stats: CommitGraphStats) => setGraphStats(stats), [])
+  const handleSelectCommit = useCallback((commit: GitCommit) => setSelectedCommitHash(commit.hash), [])
 
   const repositories = repositoryList?.repositories ?? []
   const commits = commitLog?.commits ?? []
   const hasCommits = commits.length > 0
+
+  const loadedHashes = useMemo(() => new Set(commits.map((commit) => commit.hash)), [commits])
+  const isCommitLoaded = useCallback((commitHash: string) => loadedHashes.has(commitHash), [loadedHashes])
+
+  // Esc closes the panel; ↑/↓ walk the graph while it is open, so a commit can
+  // be read through without going back to the mouse. Typing in the search box
+  // keeps its own arrow-key behaviour.
+  useEffect(() => {
+    if (selectedCommitHash === null) return
+    function handleKeyDown(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null
+      if (target?.tagName === 'INPUT' || target?.tagName === 'SELECT' || target?.isContentEditable) {
+        if (event.key !== 'Escape') return
+      }
+      if (event.key === 'Escape') {
+        setSelectedCommitHash(null)
+        return
+      }
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+      const currentRow = commits.findIndex((commit) => commit.hash === selectedCommitHash)
+      if (currentRow < 0) return
+      const nextRow = currentRow + (event.key === 'ArrowDown' ? 1 : -1)
+      const nextCommit = commits[nextRow]
+      if (!nextCommit) return
+      event.preventDefault()
+      setSelectedCommitHash(nextCommit.hash)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [commits, selectedCommitHash])
 
   const readout = [
     hasCommits &&
@@ -131,7 +200,8 @@ export function App() {
         </div>
       </header>
 
-      <main className="relative flex-1 overflow-auto">
+      <main className="flex min-h-0 flex-1">
+        <div className="relative min-w-0 flex-1 overflow-auto">
         {loadError !== null && (
           <p className="px-4 py-6 text-[#ff7b72]">
             {loadError}
@@ -152,7 +222,26 @@ export function App() {
           <p className="px-4 py-6 text-faint">Loading commit history…</p>
         )}
         {loadError === null && hasCommits && (
-          <CommitGraph commits={commits} searchQuery={searchQuery.trim()} onStats={handleGraphStats} />
+          <CommitGraph
+            commits={commits}
+            searchQuery={searchQuery.trim()}
+            onStats={handleGraphStats}
+            selectedHash={selectedCommitHash}
+            onSelectCommit={handleSelectCommit}
+          />
+        )}
+        </div>
+
+        {selectedCommitHash !== null && (
+          <CommitDetailPanel
+            detail={commitDetail}
+            isLoading={isLoadingDetail}
+            error={detailError}
+            requestedHash={selectedCommitHash}
+            onSelectCommit={setSelectedCommitHash}
+            isCommitLoaded={isCommitLoaded}
+            onClose={() => setSelectedCommitHash(null)}
+          />
         )}
       </main>
 

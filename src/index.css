@@ -12,6 +12,9 @@
   --color-canvas: #0d1117;
   --color-raised: #161b22;
   --color-rowhover: #1b2230;
+  /* Selected row — one shared token (ADR-0028) for every surface that marks a
+     selection: graph rows today, anything else that gains one later. */
+  --color-rowselected: #223049;
   --color-line: #232c38;
   --color-fg: #e6edf3;
   --color-dim: #8b949e;

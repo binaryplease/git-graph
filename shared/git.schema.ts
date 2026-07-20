@@ -78,6 +78,77 @@ export const CommitLogQuerySchema = z.object({
 })
 export type CommitLogQuery = z.infer<typeof CommitLogQuerySchema>
 
+export const FileChangeStatusSchema = z
+  .enum(['added', 'modified', 'deleted', 'renamed', 'copied', 'type-changed', 'unmerged', 'unknown'])
+  .describe('How the file changed in this commit, from the git `--raw` status letter.')
+export type FileChangeStatus = z.infer<typeof FileChangeStatusSchema>
+
+export const CommitFileChangeSchema = z.object({
+  path: z.string().min(1).describe('Repository-relative path of the file after the change.'),
+  previousPath: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe('Path before a rename or copy; null for every other status (ADR-0024).'),
+  status: FileChangeStatusSchema.default('unknown'),
+  additions: z
+    .number()
+    .int()
+    .nullable()
+    .default(null)
+    .describe('Lines added, or null when git cannot diff the file by line (binary).'),
+  deletions: z
+    .number()
+    .int()
+    .nullable()
+    .default(null)
+    .describe('Lines removed, or null when git cannot diff the file by line (binary).'),
+  binary: z.boolean().default(false).describe('True when git reported the file as binary.'),
+})
+export type CommitFileChange = z.infer<typeof CommitFileChangeSchema>
+
+export const CommitDetailSchema = z.object({
+  hash: z.string().min(1).describe('Abbreviated commit hash (git `%h`), matching the graph rows.'),
+  fullHash: z.string().min(1).describe('Full 40-character commit hash (git `%H`).'),
+  parents: z
+    .array(z.string())
+    .default([])
+    .describe('Abbreviated parent hashes (git `%p`), first parent first. Empty for root commits.'),
+  refs: z.array(z.string()).default([]).describe('Ref decorations pointing at this commit (git `%D`).'),
+  author: z.string().default('').describe('Author name (git `%an`).'),
+  authorEmail: z.string().default('').describe('Author email (git `%ae`).'),
+  authorDate: z.string().default('').describe('Author date, ISO 8601 (git `%aI`).'),
+  committer: z.string().default('').describe('Committer name (git `%cn`).'),
+  committerEmail: z.string().default('').describe('Committer email (git `%ce`).'),
+  committerDate: z.string().default('').describe('Committer date, ISO 8601 (git `%cI`).'),
+  subject: z.string().default('').describe('Commit subject line (git `%s`).'),
+  body: z.string().default('').describe('Commit message body below the subject (git `%b`); empty when there is none.'),
+  files: z
+    .array(CommitFileChangeSchema)
+    .default([])
+    .describe(
+      'Files changed by this commit. For a merge the diff is taken against the first parent, ' +
+        'which is what makes a merge show the changes it brought in.',
+    ),
+  filesTruncated: z
+    .boolean()
+    .default(false)
+    .describe('True when the commit touches more files than the service returns.'),
+})
+export type CommitDetail = z.infer<typeof CommitDetailSchema>
+
+export const CommitDetailQuerySchema = z.object({
+  repo: z
+    .string()
+    .default('')
+    .describe('Repository identifier: the `relativePath` from the repository listing.'),
+  hash: z
+    .string()
+    .regex(/^[0-9a-fA-F]{4,40}$/, 'must be an abbreviated or full hexadecimal commit hash')
+    .describe('Commit to describe — the `hash` of a row in the commit log.'),
+})
+export type CommitDetailQuery = z.infer<typeof CommitDetailQuerySchema>
+
 export const GitErrorSchema = z.object({
   error: z.string().describe('Human-readable description of what went wrong.'),
 })
