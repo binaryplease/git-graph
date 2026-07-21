@@ -4,9 +4,11 @@ import type { CommitDetail, CommitFileChange } from '../shared/git.schema'
 import { fetchCommitDetail, fetchFileDiff } from './lib/api'
 import { loadHighlighter } from './lib/highlighter'
 import { parseCommitDiffParams } from './lib/diffRoutes'
+import { useTheme } from './lib/theme'
 import { DiffTabFrame } from './components/DiffTabFrame'
 import { MultiFileDiffView } from './components'
 import { CopyButton } from './components/CopyButton'
+import { ThemeToggle } from './components/ThemeToggle'
 
 // The full-commit tab — what "open this commit in a new tab" opens. Like the
 // other pages it is an app shell: it owns the fetching (the commit's metadata
@@ -14,6 +16,7 @@ import { CopyButton } from './components/CopyButton'
 // MultiFileDiffView.
 
 export function CommitDiffPage() {
+  const { themeMode, setThemeMode, resolvedTheme } = useTheme()
   const [params] = useState(() => parseCommitDiffParams(location.search))
   const [detail, setDetail] = useState<CommitDetail | null>(null)
   const [isLoading, setIsLoading] = useState(params !== null)
@@ -77,6 +80,7 @@ export function CommitDiffPage() {
               {repositoryLabel}
             </span>
           </div>
+          <ThemeToggle themeMode={themeMode} onSelectThemeMode={setThemeMode} />
         </>
       }
     >
@@ -94,6 +98,7 @@ export function CommitDiffPage() {
               ? 'This merge brought in no changes of its own.'
               : 'This commit changed no files.'
           }
+          diffViewTheme={resolvedTheme}
         />
       )}
     </DiffTabFrame>

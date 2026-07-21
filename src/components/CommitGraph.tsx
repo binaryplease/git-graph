@@ -14,12 +14,12 @@ const LANE_GAP = 16
 const X_OFFSET = 16
 const NODE_RADIUS = 5
 
-// Distinct lane hues that read well on the dark background.
-const LANE_COLORS = [
-  '#58a6ff', '#7ee787', '#e3b341', '#ff7b72', '#d2a8ff',
-  '#79c0ff', '#56d364', '#f0883e', '#ff9bce', '#a5d6ff',
-]
-const laneColor = (laneIndex: number) => LANE_COLORS[laneIndex % LANE_COLORS.length]!
+// Distinct lane hues, cycled by lane index. The values live in the theme tokens
+// (`--lane-*` in theme.css) so they retune per color theme — the dark set reads
+// on the dark canvas, the light override keeps its contrast on white — the same
+// way the SVG already reads `var(--color-canvas)` for node fills below.
+const LANE_COUNT = 10
+const laneColor = (laneIndex: number) => `var(--lane-${laneIndex % LANE_COUNT})`
 
 const laneX = (lane: number) => X_OFFSET + lane * LANE_GAP
 const rowY = (row: number) => row * ROW_HEIGHT + ROW_HEIGHT / 2

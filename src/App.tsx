@@ -17,9 +17,12 @@ import {
 } from './lib/api'
 import { commitDiffHref, compareHref, fileDiffHref } from './lib/diffRoutes'
 import { loadHighlighter } from './lib/highlighter'
+import { useTheme } from './lib/theme'
 import { CommitGraph, CommitDetailPanel, type CommitGraphStats } from './components'
+import { ThemeToggle } from './components/ThemeToggle'
 
 export function App() {
+  const { themeMode, setThemeMode, resolvedTheme } = useTheme()
   const [repositoryList, setRepositoryList] = useState<RepositoryList | null>(null)
   // The selected repository's relativePath — '' is a valid value (the served
   // root itself is a repository), so "nothing selected" is null.
@@ -307,6 +310,8 @@ export function App() {
             </div>
 
             <span className="text-faint tabular-nums">{readout}</span>
+
+            <ThemeToggle themeMode={themeMode} onSelectThemeMode={setThemeMode} />
           </div>
         </header>
 
@@ -358,6 +363,7 @@ export function App() {
               fileDiff={fileDiff}
               isLoadingFileDiff={isLoadingFileDiff}
               fileDiffError={fileDiffError}
+              diffViewTheme={resolvedTheme}
               onClose={() => setSelectedCommitHash(null)}
             />
           )}

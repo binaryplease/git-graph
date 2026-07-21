@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react'
 
-// The chrome every standalone diff tab shares (ADR-0026): a full-window dark
-// frame with a header bar and a scrolling body. Each page fills the header with
-// its own subject and metadata and drops its content into the body.
+// The chrome every standalone diff tab shares (ADR-0026): a full-window frame
+// with a header bar and a scrolling body, painted from the theme tokens so it
+// flips with the resolved light/dark theme. Each page fills the header with its
+// own subject, metadata, and theme toggle and drops its content into the body.
 
 export function DiffTabFrame({ header, children }: { header: ReactNode; children: ReactNode }) {
   return (

@@ -4,8 +4,10 @@ import type { BranchList, CommitFileChange, CompareSummary } from '../shared/git
 import { fetchBranches, fetchCompareFileDiff, fetchCompareSummary } from './lib/api'
 import { loadHighlighter } from './lib/highlighter'
 import { compareHref, parseCompareParams } from './lib/diffRoutes'
+import { useTheme } from './lib/theme'
 import { DiffTabFrame } from './components/DiffTabFrame'
 import { MultiFileDiffView } from './components'
+import { ThemeToggle } from './components/ThemeToggle'
 
 // The branch-comparison tab — what "compare this branch against main" opens. An
 // omitted base means the repository default branch (resolved on the server), and
@@ -13,6 +15,7 @@ import { MultiFileDiffView } from './components'
 // pages it owns the fetching and composes the fetch-free MultiFileDiffView.
 
 export function ComparePage() {
+  const { themeMode, setThemeMode, resolvedTheme } = useTheme()
   const [params] = useState(() => parseCompareParams(location.search))
   const [summary, setSummary] = useState<CompareSummary | null>(null)
   const [branchList, setBranchList] = useState<BranchList | null>(null)
@@ -129,6 +132,7 @@ export function ComparePage() {
               {repositoryLabel}
             </span>
           </div>
+          <ThemeToggle themeMode={themeMode} onSelectThemeMode={setThemeMode} />
         </>
       }
     >
@@ -142,6 +146,7 @@ export function ComparePage() {
           filesTruncated={summary.filesTruncated}
           loadFileDiff={loadFileDiff}
           emptyMessage={`${summary.head} has no changes relative to ${summary.base}.`}
+          diffViewTheme={resolvedTheme}
         />
       )}
     </DiffTabFrame>

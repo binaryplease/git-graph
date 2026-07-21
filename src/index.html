@@ -5,6 +5,28 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>binp-git-graph</title>
+    <!-- Resolve the theme before first paint to avoid a flash of the wrong
+         palette. Mirrors src/lib/theme.ts (kept trivially in sync by hand);
+         useTheme takes over once React mounts. -->
+    <script>
+      (function resolveThemeBeforePaint() {
+        try {
+          var storedMode = localStorage.getItem('binp-git-graph:theme')
+          var themeMode =
+            storedMode === 'light' || storedMode === 'dark' ? storedMode : 'system'
+          var resolvedTheme =
+            themeMode === 'system'
+              ? window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light'
+              : themeMode
+          document.documentElement.dataset.theme = resolvedTheme
+          document.documentElement.style.colorScheme = resolvedTheme
+        } catch (themeError) {
+          document.documentElement.dataset.theme = 'dark'
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

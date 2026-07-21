@@ -16,7 +16,18 @@
    The `mark` and `.ref-pill*` rules are the small amount of non-utility styling
    the components depend on (fuzzy-match highlighting, ADR-0019, and the ref
    decoration pills), so they travel with the tokens: a host that imports this
-   file gets components that render correctly, exactly as the standalone app. */
+   file gets components that render correctly, exactly as the standalone app.
+
+   The @theme block below is the DARK palette and doubles as the fallback when no
+   resolved theme is set on <html>. The light palette re-skins the whole app by
+   overriding the same custom properties under [data-theme="light"]; the
+   generated utilities read them through var(), so there is no per-utility churn.
+   The resolved theme (dark|light) is written to <html data-theme> by the
+   pre-paint shim in index.html and thereafter by the useTheme hook — or, when
+   embedded, by the host app, whose [data-theme] the tokens follow without this
+   app touching the attribute. The graph's lane hues are tokens too (`--lane-*`,
+   read by CommitGraph) so they retune per theme rather than washing out on a
+   light surface. */
 @theme {
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --font-mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", "Menlo", monospace;
@@ -36,6 +47,49 @@
   --color-faint: #6e7681;
   --color-accent: #58a6ff;
   --color-match: #ffd33d;
+
+  /* Graph lane / branch-column hues — data-visualization colors, cycled by lane
+     index in CommitGraph. The dark set (GitHub-dark) reads on the dark canvas;
+     the light override below swaps in deeper, saturated equivalents that keep
+     their contrast on white. */
+  --lane-0: #58a6ff;
+  --lane-1: #7ee787;
+  --lane-2: #e3b341;
+  --lane-3: #ff7b72;
+  --lane-4: #d2a8ff;
+  --lane-5: #79c0ff;
+  --lane-6: #56d364;
+  --lane-7: #f0883e;
+  --lane-8: #ff9bce;
+  --lane-9: #a5d6ff;
+}
+
+/* Light palette — GitHub-light equivalents of the same tokens, retuned for
+   legible contrast on a paper surface. Unlayered, so it wins over the @layer
+   theme :root defaults the @theme block emits. */
+[data-theme="light"] {
+  --color-backdrop: #eaeef2;
+  --color-canvas: #ffffff;
+  --color-raised: #f6f8fa;
+  --color-rowhover: #eaeef2;
+  --color-rowselected: #ddf4ff;
+  --color-line: #d0d7de;
+  --color-fg: #1f2328;
+  --color-dim: #59636e;
+  --color-faint: #818b98;
+  --color-accent: #0969da;
+  --color-match: #ffd60a;
+
+  --lane-0: #0969da;
+  --lane-1: #1a7f37;
+  --lane-2: #9a6700;
+  --lane-3: #cf222e;
+  --lane-4: #8250df;
+  --lane-5: #0550ae;
+  --lane-6: #116329;
+  --lane-7: #bc4c00;
+  --lane-8: #bf3989;
+  --lane-9: #218bff;
 }
 
 /* Fuzzy-search matched characters (ADR-0019). */
@@ -75,4 +129,28 @@ mark {
   background: #9e6a0333;
   color: #e3b341;
   border-color: #9e6a0388;
+}
+
+/* Light-theme ref pills — the translucent-over-dark fills wash out on white and
+   the light text loses contrast, so each kind gets a paper-legible variant that
+   keeps the same head/branch/remote/tag color language. */
+[data-theme="light"] .ref-head {
+  background: #ddf4ff;
+  color: #0550ae;
+  border-color: #54aeff;
+}
+[data-theme="light"] .ref-branch {
+  background: #dafbe1;
+  color: #116329;
+  border-color: #4ac26b;
+}
+[data-theme="light"] .ref-remote {
+  background: #eaeef2;
+  color: #57606a;
+  border-color: #afb8c1;
+}
+[data-theme="light"] .ref-tag {
+  background: #fff1e5;
+  color: #953800;
+  border-color: #ffb77c;
 }

@@ -5,8 +5,8 @@
    utilities. */
 @import "./theme.css";
 
-/* App-shell chrome — standalone only, so it stays out of the shared theme a
-   host imports (a host owns its own page's color-scheme). */
-html {
-  color-scheme: dark;
-}
+/* `color-scheme` is set dynamically on <html> per resolved theme — first by the
+   pre-paint shim in index.html, then by the useTheme hook — so it aligns native
+   affordances (scrollbars, form controls) with light or dark. It deliberately
+   lives there and not here: a host that imports the shared theme owns its own
+   page's color-scheme. */

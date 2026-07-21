@@ -4,8 +4,10 @@ import type { FileDiff as FileDiffPayload } from '../shared/git.schema'
 import { fetchFileDiff } from './lib/api'
 import { loadHighlighter } from './lib/highlighter'
 import { parseFileDiffParams } from './lib/diffRoutes'
+import { useTheme } from './lib/theme'
 import { FileDiff } from './components'
 import { CopyButton } from './components/CopyButton'
+import { ThemeToggle } from './components/ThemeToggle'
 
 // The standalone diff tab — what a cmd/ctrl/middle-click on a changed file
 // opens. It is a second app shell alongside App.tsx: like App it owns all the
@@ -19,6 +21,7 @@ function fileName(filePath: string) {
 }
 
 export function FileDiffPage() {
+  const { themeMode, setThemeMode, resolvedTheme } = useTheme()
   // location.search never changes over this tab's life, so parse it once.
   const [params] = useState(() => parseFileDiffParams(location.search))
   const [diff, setDiff] = useState<FileDiffPayload | null>(null)
@@ -83,10 +86,20 @@ export function FileDiffPage() {
             </>
           )}
         </div>
+
+        <ThemeToggle themeMode={themeMode} onSelectThemeMode={setThemeMode} />
       </header>
 
       <main className="min-h-0 flex-1 overflow-auto p-4">
-        <FileDiff diff={diff} isLoading={isLoading} error={error} mode="split" wrap={false} fontSize={12.5} />
+        <FileDiff
+          diff={diff}
+          isLoading={isLoading}
+          error={error}
+          mode="split"
+          wrap={false}
+          fontSize={12.5}
+          diffViewTheme={resolvedTheme}
+        />
       </main>
     </div>
   )
