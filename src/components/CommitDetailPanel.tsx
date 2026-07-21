@@ -281,6 +281,21 @@ export type CommitDetailPanelProps = {
    * href-or-absent behaviour.
    */
   onOpenCompare?: (branchName: string) => void
+  /**
+   * Where this panel is mounted, which drives its frame — not its content. The
+   * body (message, metadata, changed files) is identical either way (ADR-0027:
+   * the invariant is the detail, not the container). `sidebar` (the default) is
+   * the docked right rail that widens for an open diff; `inline` is a full-width
+   * block the graph shell renders in-flow beneath the selected commit row.
+   */
+  variant?: 'sidebar' | 'inline'
+  /**
+   * Extra controls for the panel header, rendered between the subject and the
+   * close button (ADR-0031: the detail view's own view-mode toggle rides here,
+   * not in app chrome). The standalone app passes its layout toggle; omit it and
+   * the header is just subject + close, exactly as before.
+   */
+  headerActions?: ReactNode
 }
 
 export function CommitDetailPanel({
@@ -304,7 +319,10 @@ export function CommitDetailPanel({
   onOpenFileDiff,
   onOpenCommitDiff,
   onOpenCompare,
+  variant = 'sidebar',
+  headerActions,
 }: CommitDetailPanelProps) {
+  const isInline = variant === 'inline'
   const commitDiffHref = buildCommitDiffHref()
   const authored = formatCommitDate(detail?.authorDate ?? '')
   const committed = formatCommitDate(detail?.committerDate ?? '')
@@ -318,21 +336,29 @@ export function CommitDetailPanel({
   const totalAdditions = (detail?.files ?? []).reduce((sum, file) => sum + (file.additions ?? 0), 0)
   const totalDeletions = (detail?.files ?? []).reduce((sum, file) => sum + (file.deletions ?? 0), 0)
 
+  const Container = isInline ? 'section' : 'aside'
   return (
-    <aside
-      // Metadata reads fine at 26rem, wrapped code does not. The panel widens
-      // for the file that is open and gives the width back when it closes —
-      // capped, because a narrow window would otherwise leave the graph too
-      // thin to show a commit subject.
-      className={`flex shrink-0 flex-col overflow-hidden border-l border-line bg-raised transition-[width] duration-150 ${
-        expandedFilePath !== null ? 'w-[44rem] max-w-[55vw]' : 'w-[26rem]'
-      }`}
+    <Container
+      // Sidebar: metadata reads fine at 26rem, wrapped code does not, so the rail
+      // widens for the file that is open and gives the width back when it closes —
+      // capped, because a narrow window would otherwise leave the graph too thin
+      // to show a commit subject. Inline: a full-width block in the row flow, its
+      // height capped so a large commit scrolls in place rather than pushing the
+      // rows below off-screen.
+      className={
+        isInline
+          ? 'flex max-h-[65vh] flex-col overflow-hidden border-y border-line bg-raised'
+          : `flex shrink-0 flex-col overflow-hidden border-l border-line bg-raised transition-[width] duration-150 ${
+              expandedFilePath !== null ? 'w-[44rem] max-w-[55vw]' : 'w-[26rem]'
+            }`
+      }
       aria-label="Commit details"
     >
       <header className="flex items-start gap-2 border-b border-line px-3 py-2">
         <h2 className="min-w-0 flex-1 text-[13px] leading-snug font-semibold break-words">
           {detail?.subject || (error !== null ? 'Commit unavailable' : 'Loading commit…')}
         </h2>
+        {headerActions}
         <button
           type="button"
           className="shrink-0 cursor-pointer rounded p-0.5 text-faint hover:bg-rowhover hover:text-fg"
@@ -549,6 +575,6 @@ export function CommitDetailPanel({
           </>
         )}
       </div>
-    </aside>
+    </Container>
   )
 }

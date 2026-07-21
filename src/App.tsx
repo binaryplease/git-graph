@@ -18,11 +18,14 @@ import {
 import { commitDiffHref, compareHref, fileDiffHref } from './lib/diffRoutes'
 import { loadHighlighter } from './lib/highlighter'
 import { useTheme } from './lib/theme'
+import { useDetailLayout } from './lib/detailLayout'
 import { CommitGraph, CommitDetailPanel, type CommitGraphStats } from './components'
 import { ThemeToggle } from './components/ThemeToggle'
+import { DetailLayoutToggle } from './components/DetailLayoutToggle'
 
 export function App() {
   const { themeMode, setThemeMode, resolvedTheme } = useTheme()
+  const { detailLayout, setDetailLayout } = useDetailLayout()
   const [repositoryList, setRepositoryList] = useState<RepositoryList | null>(null)
   // The selected repository's relativePath — '' is a valid value (the served
   // root itself is a repository), so "nothing selected" is null.
@@ -249,6 +252,36 @@ export function App() {
     .filter(Boolean)
     .join(' · ')
 
+  // Built once so the sidebar and inline mounts render the identical panel — the
+  // variant it carries decides its frame (ADR-0027: one component, the detail is
+  // the invariant). The layout toggle rides on the panel's own header (ADR-0031:
+  // a view-mode toggle for the detail surface, not app-global chrome).
+  const detailPanel =
+    selectedCommitHash === null ? null : (
+      <CommitDetailPanel
+        variant={detailLayout}
+        headerActions={
+          <DetailLayoutToggle detailLayout={detailLayout} onSelectDetailLayout={setDetailLayout} />
+        }
+        detail={commitDetail}
+        isLoading={isLoadingDetail}
+        error={detailError}
+        requestedHash={selectedCommitHash}
+        onSelectCommit={setSelectedCommitHash}
+        isCommitLoaded={isCommitLoaded}
+        expandedFilePath={expandedFilePath}
+        onToggleFile={handleToggleFile}
+        buildFileDiffHref={buildFileDiffHref}
+        buildCommitDiffHref={buildCommitDiffHref}
+        buildCompareHref={buildCompareHref}
+        fileDiff={fileDiff}
+        isLoadingFileDiff={isLoadingFileDiff}
+        fileDiffError={fileDiffError}
+        diffViewTheme={resolvedTheme}
+        onClose={() => setSelectedCommitHash(null)}
+      />
+    )
+
   return (
     // The standalone shell is capped at 1440×900 and centred: the graph is a
     // dense, fixed-width-ish reading surface, so letting it stretch across an
@@ -343,30 +376,15 @@ export function App() {
               onStats={handleGraphStats}
               selectedHash={selectedCommitHash}
               onSelectCommit={handleSelectCommit}
+              // Inline is the default: the detail expands in-flow beneath the
+              // selected row. In sidebar mode the graph stays unbroken and the
+              // panel docks to the right instead.
+              selectedDetail={detailLayout === 'inline' ? detailPanel : null}
             />
           )}
           </div>
 
-          {selectedCommitHash !== null && (
-            <CommitDetailPanel
-              detail={commitDetail}
-              isLoading={isLoadingDetail}
-              error={detailError}
-              requestedHash={selectedCommitHash}
-              onSelectCommit={setSelectedCommitHash}
-              isCommitLoaded={isCommitLoaded}
-              expandedFilePath={expandedFilePath}
-              onToggleFile={handleToggleFile}
-              buildFileDiffHref={buildFileDiffHref}
-              buildCommitDiffHref={buildCommitDiffHref}
-              buildCompareHref={buildCompareHref}
-              fileDiff={fileDiff}
-              isLoadingFileDiff={isLoadingFileDiff}
-              fileDiffError={fileDiffError}
-              diffViewTheme={resolvedTheme}
-              onClose={() => setSelectedCommitHash(null)}
-            />
-          )}
+          {detailLayout === 'sidebar' && detailPanel}
         </main>
 
         <footer className="flex flex-wrap gap-4 border-t border-line bg-raised px-4 py-1.5 text-[11.5px] text-faint">

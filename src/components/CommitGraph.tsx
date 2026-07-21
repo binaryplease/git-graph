@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { GitCommit } from '../../shared/git.schema'
 import { computeGraphLayout } from '../../shared/graphLayout'
 import { fuzzyHighlight, type FuzzyHighlight } from '../../shared/fuzzy'
@@ -22,16 +22,17 @@ const LANE_COUNT = 10
 const laneColor = (laneIndex: number) => `var(--lane-${laneIndex % LANE_COUNT})`
 
 const laneX = (lane: number) => X_OFFSET + lane * LANE_GAP
-const rowY = (row: number) => row * ROW_HEIGHT + ROW_HEIGHT / 2
+const baseRowY = (row: number) => row * ROW_HEIGHT + ROW_HEIGHT / 2
 
 // Curve from a child node down to a parent node. When lanes differ, complete
 // the horizontal shift inside the first row (a smooth elbow) then run straight
 // down the parent's lane — so long edges never diagonally cross other columns.
-function edgePath(childLane: number, childRow: number, parentLane: number, parentRow: number) {
+// Takes explicit y for both ends so the caller can offset the rows below an
+// inline commit-detail expansion without this geometry knowing about it — an
+// edge that spans the expansion just runs its straight segment down the gap.
+function edgePath(childLane: number, startY: number, parentLane: number, endY: number) {
   const startX = laneX(childLane)
-  const startY = rowY(childRow)
   const endX = laneX(parentLane)
-  const endY = rowY(parentRow)
   if (childLane === parentLane) return `M${startX},${startY} L${endX},${endY}`
   const dip = Math.min(ROW_HEIGHT, endY - startY)
   const elbowY = startY + dip
@@ -72,6 +73,14 @@ export type CommitGraphProps = {
   selectedHash?: string | null
   /** Called when a row is activated by click or keyboard. */
   onSelectCommit?: (commit: GitCommit) => void
+  /**
+   * Detail to expand in-flow directly beneath the selected row (the app's
+   * inline commit-detail view). When set and a row is selected, the graph
+   * inserts it after that row and offsets the SVG geometry for every row below
+   * so nodes and edges stay aligned. Null keeps the graph unbroken — the host
+   * is showing the detail elsewhere (e.g. a docked sidebar), or nothing at all.
+   */
+  selectedDetail?: ReactNode
 }
 
 export function CommitGraph({
@@ -80,6 +89,7 @@ export function CommitGraph({
   onStats,
   selectedHash = null,
   onSelectCommit,
+  selectedDetail = null,
 }: CommitGraphProps) {
   const layout = useMemo(() => computeGraphLayout(commits), [commits])
   const visibleHashes = useMemo(() => new Set(commits.map((commit) => commit.hash)), [commits])
@@ -126,8 +136,35 @@ export function CommitGraph({
     rowsContainerRef.current?.children[selectedRow]?.scrollIntoView({ block: 'nearest' })
   }, [selectedRow])
 
+  // The row after which the inline commit-detail view expands, and its measured
+  // height. Everything below this row is pushed down by the DOM automatically;
+  // the absolutely-positioned SVG is a separate layer, so it re-derives the same
+  // offset from the measured height to keep nodes and edges aligned with rows.
+  const detailAfterRow = selectedDetail !== null && selectedRow >= 0 ? selectedRow : -1
+  const detailRef = useRef<HTMLDivElement>(null)
+  const [detailHeight, setDetailHeight] = useState(0)
+  useLayoutEffect(() => {
+    const node = detailRef.current
+    if (detailAfterRow < 0 || node === null) {
+      setDetailHeight(0)
+      return
+    }
+    const measure = () => setDetailHeight(node.offsetHeight)
+    measure()
+    // Re-measure as the detail grows and shrinks (a file diff expands inside it),
+    // so the rows below track its height. Guarded for the test DOM, which has no
+    // ResizeObserver — there the one-shot measure above is enough.
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measure)
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [detailAfterRow])
+
+  const rowY = (row: number) =>
+    baseRowY(row) + (detailAfterRow >= 0 && row > detailAfterRow ? detailHeight : 0)
+
   const graphWidth = X_OFFSET * 2 + Math.max(0, layout.laneCount - 1) * LANE_GAP
-  const totalHeight = commits.length * ROW_HEIGHT
+  const totalHeight = commits.length * ROW_HEIGHT + (detailAfterRow >= 0 ? detailHeight : 0)
 
   return (
     <div className="relative">
@@ -140,7 +177,7 @@ export function CommitGraph({
         {layout.links.map((link, linkIndex) => (
           <path
             key={linkIndex}
-            d={edgePath(link.childLane, link.childRow, link.parentLane, link.parentRow)}
+            d={edgePath(link.childLane, rowY(link.childRow), link.parentLane, rowY(link.parentRow))}
             fill="none"
             stroke={laneColor(link.parentLane)}
             strokeWidth={2}
@@ -177,37 +214,48 @@ export function CommitGraph({
       </svg>
 
       <div ref={rowsContainerRef} className="relative">
+        {/* One wrapper per row keeps children[row] stable for scrollIntoView even
+            when the inline detail is inserted after the selected row. */}
         {rows.map(({ commit, subject, hash, author, matched }, row) => (
-          <button
-            key={`${commit.hash}-${row}`}
-            type="button"
-            aria-current={commit.hash === selectedHash ? 'true' : undefined}
-            className={`flex w-full cursor-pointer items-center gap-2 pr-4 text-left whitespace-nowrap hover:bg-rowhover ${
-              commit.hash === selectedHash ? 'bg-rowselected' : ''
-            } ${searchQuery && !matched ? 'opacity-25 hover:opacity-60' : ''}`}
-            style={{ height: ROW_HEIGHT, paddingLeft: graphWidth + 8 }}
-            onClick={() => onSelectCommit?.(commit)}
-          >
-            {commit.refs.length > 0 && (
-              <span className="inline-flex shrink-0 gap-1.5">
-                {commit.refs.map((refDecoration) => (
-                  <RefPill key={refDecoration} refDecoration={refDecoration} />
-                ))}
+          <div key={`${commit.hash}-${row}`}>
+            <button
+              type="button"
+              aria-current={commit.hash === selectedHash ? 'true' : undefined}
+              className={`flex w-full cursor-pointer items-center gap-2 pr-4 text-left whitespace-nowrap hover:bg-rowhover ${
+                commit.hash === selectedHash ? 'bg-rowselected' : ''
+              } ${searchQuery && !matched ? 'opacity-25 hover:opacity-60' : ''}`}
+              style={{ height: ROW_HEIGHT, paddingLeft: graphWidth + 8 }}
+              onClick={() => onSelectCommit?.(commit)}
+            >
+              {commit.refs.length > 0 && (
+                <span className="inline-flex shrink-0 gap-1.5">
+                  {commit.refs.map((refDecoration) => (
+                    <RefPill key={refDecoration} refDecoration={refDecoration} />
+                  ))}
+                </span>
+              )}
+              <span className="min-w-0 flex-1 truncate">
+                <FuzzySegments highlight={subject} />
               </span>
+              <span className="shrink-0 font-mono text-[11.5px] text-faint">
+                <span className="text-dim">
+                  <FuzzySegments highlight={hash} />
+                </span>
+                <span className="mx-1.5 opacity-40">·</span>
+                <FuzzySegments highlight={author} />
+                <span className="mx-1.5 opacity-40">·</span>
+                {commit.date}
+              </span>
+            </button>
+            {/* Inline commit detail, expanded in-flow beneath its row. Indented
+                clear of the graph gutter so a branch line that spans the
+                expansion still runs cleanly down beside it. */}
+            {row === detailAfterRow && (
+              <div ref={detailRef} style={{ paddingLeft: graphWidth }}>
+                {selectedDetail}
+              </div>
             )}
-            <span className="min-w-0 flex-1 truncate">
-              <FuzzySegments highlight={subject} />
-            </span>
-            <span className="shrink-0 font-mono text-[11.5px] text-faint">
-              <span className="text-dim">
-                <FuzzySegments highlight={hash} />
-              </span>
-              <span className="mx-1.5 opacity-40">·</span>
-              <FuzzySegments highlight={author} />
-              <span className="mx-1.5 opacity-40">·</span>
-              {commit.date}
-            </span>
-          </button>
+          </div>
         ))}
       </div>
     </div>

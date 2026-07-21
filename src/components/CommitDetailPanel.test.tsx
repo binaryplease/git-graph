@@ -259,6 +259,28 @@ describe('CommitDetailPanel host open-file seam', () => {
   })
 })
 
+describe('CommitDetailPanel layout variant', () => {
+  test('the default (sidebar) variant renders as an aside', () => {
+    renderPanel()
+    const panel = screen.getByLabelText('Commit details')
+    expect(panel.tagName).toBe('ASIDE')
+  })
+
+  test('the inline variant renders the same detail in a section frame', () => {
+    renderPanel({ variant: 'inline' })
+    const panel = screen.getByLabelText('Commit details')
+    expect(panel.tagName).toBe('SECTION')
+    // Same content invariant either way — the changed files still render.
+    expect(toggleFor('src/App.tsx')).toBeTruthy()
+  })
+
+  test('headerActions render in the panel header alongside the close button', () => {
+    renderPanel({ headerActions: <button type="button">layout toggle</button> })
+    expect(screen.getByRole('button', { name: 'layout toggle' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Close the details panel' })).toBeTruthy()
+  })
+})
+
 describe('CommitDetailPanel full-commit and compare affordances', () => {
   test('the file list links to the whole commit’s diff in a new tab', () => {
     renderPanel()
