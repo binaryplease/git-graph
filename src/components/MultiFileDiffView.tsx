@@ -17,6 +17,8 @@ type LazyFileDiffSectionProps = {
   file: CommitFileChange
   index: number
   loadFileDiff: (file: CommitFileChange) => Promise<FileDiffPayload>
+  mode: 'unified' | 'split'
+  diffViewTheme: 'light' | 'dark'
 }
 
 type LoadState =
@@ -26,7 +28,7 @@ type LoadState =
   | { status: 'error'; message: string }
 
 /** One file's diff, loaded the moment its section nears the viewport. */
-function LazyFileDiffSection({ file, index, loadFileDiff }: LazyFileDiffSectionProps) {
+function LazyFileDiffSection({ file, index, loadFileDiff, mode, diffViewTheme }: LazyFileDiffSectionProps) {
   const [isCollapsed, setIsCollapsed] = useState(false)
   const [load, setLoad] = useState<LoadState>({ status: 'idle' })
   const containerRef = useRef<HTMLDivElement>(null)
@@ -100,9 +102,10 @@ function LazyFileDiffSection({ file, index, loadFileDiff }: LazyFileDiffSectionP
               diff={load.status === 'ready' ? load.diff : null}
               isLoading={load.status === 'idle' || load.status === 'loading'}
               error={load.status === 'error' ? load.message : null}
-              mode="split"
+              mode={mode}
               wrap={false}
               fontSize={12.5}
+              diffViewTheme={diffViewTheme}
             />
           )}
         </div>
@@ -118,6 +121,17 @@ export type MultiFileDiffViewProps = {
   loadFileDiff: (file: CommitFileChange) => Promise<FileDiffPayload>
   /** Shown in the file-list heading, e.g. `12 files changed`. */
   emptyMessage: string
+  /**
+   * Per-file diff layout, threaded to every {@link FileDiff}. Defaults to the
+   * standalone whole-tab view's `split`; a docked/narrow host can pass `unified`.
+   */
+  mode?: 'unified' | 'split'
+  /**
+   * The @git-diff-view colour scheme, threaded to every {@link FileDiff}.
+   * Defaults to `dark` (the standalone app's palette) so this repo's callers are
+   * unchanged; an embedding host with a live theme passes its resolved scheme.
+   */
+  diffViewTheme?: 'light' | 'dark'
 }
 
 export function MultiFileDiffView({
@@ -125,6 +139,8 @@ export function MultiFileDiffView({
   filesTruncated,
   loadFileDiff,
   emptyMessage,
+  mode = 'split',
+  diffViewTheme = 'dark',
 }: MultiFileDiffViewProps) {
   const totalAdditions = files.reduce((sum, file) => sum + (file.additions ?? 0), 0)
   const totalDeletions = files.reduce((sum, file) => sum + (file.deletions ?? 0), 0)
@@ -182,6 +198,8 @@ export function MultiFileDiffView({
             file={file}
             index={index}
             loadFileDiff={loadFileDiff}
+            mode={mode}
+            diffViewTheme={diffViewTheme}
           />
         ))}
       </div>

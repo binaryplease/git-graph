@@ -30,6 +30,13 @@ export type FileDiffProps = {
   mode?: 'unified' | 'split'
   wrap?: boolean
   fontSize?: number
+  /**
+   * The @git-diff-view colour scheme. Defaults to `dark` — the standalone app's
+   * single GitHub-dark palette — so this repo's own callers are unchanged. An
+   * embedding host (nightshift-ui) with a live light/dark theme passes its
+   * resolved scheme so the diff body flips with the host rather than staying dark.
+   */
+  diffViewTheme?: 'light' | 'dark'
 }
 
 /**
@@ -54,6 +61,7 @@ export function FileDiff({
   mode = 'unified',
   wrap = true,
   fontSize = 11.5,
+  diffViewTheme = 'dark',
 }: FileDiffProps) {
   const [build, setBuild] = useState<DiffBuild>({ state: 'pending' })
 
@@ -118,7 +126,7 @@ export function FileDiff({
       <DiffView
         diffFile={build.diffViewFile}
         diffViewMode={mode === 'split' ? DiffModeEnum.Split : DiffModeEnum.Unified}
-        diffViewTheme="dark"
+        diffViewTheme={diffViewTheme}
         diffViewHighlight
         diffViewWrap={wrap}
         diffViewFontSize={fontSize}
