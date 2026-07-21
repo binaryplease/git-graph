@@ -57,6 +57,8 @@ type FileChangeRowProps = {
   diff: FileDiffPayload | null
   isLoadingDiff: boolean
   diffError: string | null
+  /** The @git-diff-view colour scheme for the inline diff body, threaded from the panel. */
+  diffViewTheme: 'light' | 'dark'
   /** The host's open-file seam; when set, the row shows a distinct open-file control. */
   onOpenFile?: OpenFileHandler
 }
@@ -76,6 +78,7 @@ function FileChangeRow({
   diff,
   isLoadingDiff,
   diffError,
+  diffViewTheme,
   onOpenFile,
 }: FileChangeRowProps) {
   const description = describeFileChange(file)
@@ -165,7 +168,7 @@ function FileChangeRow({
 
       {isExpanded && (
         <div id={diffBodyId} className="mt-1 mb-2 ml-1">
-          <FileDiff diff={diff} isLoading={isLoadingDiff} error={diffError} />
+          <FileDiff diff={diff} isLoading={isLoadingDiff} error={diffError} diffViewTheme={diffViewTheme} />
         </div>
       )}
     </li>
@@ -211,6 +214,14 @@ export type CommitDetailPanelProps = {
   fileDiffError: string | null
   onClose: () => void
   /**
+   * The @git-diff-view colour scheme. Defaults to `dark` — the standalone app's
+   * single GitHub-dark palette — so this repo's own callers are unchanged. An
+   * embedding host (nightshift-ui) with a live light/dark theme passes its
+   * resolved scheme so the inline diff bodies flip with the host rather than
+   * staying dark.
+   */
+  diffViewTheme?: 'light' | 'dark'
+  /**
    * Optional host seam (ADR-0026): when provided, each changed-file row shows a
    * distinct "open this file" control that invokes it with the file — for a host
    * that opens the file in its own surface (e.g. an in-app file browser). It never
@@ -236,6 +247,7 @@ export function CommitDetailPanel({
   isLoadingFileDiff,
   fileDiffError,
   onClose,
+  diffViewTheme = 'dark',
   onOpenFile,
 }: CommitDetailPanelProps) {
   const commitDiffHref = buildCommitDiffHref()
@@ -441,6 +453,7 @@ export function CommitDetailPanel({
                       diff={isExpanded ? fileDiff : null}
                       isLoadingDiff={isExpanded && isLoadingFileDiff}
                       diffError={isExpanded ? fileDiffError : null}
+                      diffViewTheme={diffViewTheme}
                       onOpenFile={onOpenFile}
                     />
                   )
