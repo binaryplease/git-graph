@@ -47,11 +47,23 @@
   --color-faint: #6e7681;
   --color-accent: #58a6ff;
   --color-match: #ffd33d;
+}
 
-  /* Graph lane / branch-column hues — data-visualization colors, cycled by lane
-     index in CommitGraph. The dark set (GitHub-dark) reads on the dark canvas;
-     the light override below swaps in deeper, saturated equivalents that keep
-     their contrast on white. */
+/* Graph lane / branch-column hues — data-visualization colors, cycled by lane
+   index in CommitGraph. The dark set (GitHub-dark) reads on the dark canvas; the
+   light override below swaps in deeper, saturated equivalents that keep their
+   contrast on white.
+
+   `@theme static`, NOT a plain `@theme` block: these tokens are read ONLY from
+   JS — the SVG sets `stroke`/`fill` to `var(--lane-N)` inline — never through a
+   generated Tailwind utility. Tailwind's usage scan only sees class names, so in
+   a plain `@theme` block it treats every `--lane-*` as unused and tree-shakes it
+   out of the emitted `:root`. Then `var(--lane-N)` resolves to nothing: the edge
+   `stroke` falls back to SVG's default `none` (all connecting lines vanish) and
+   the node `fill` to the default black (dots render as plain black blobs). The
+   `static` option forces the whole block to emit regardless of detected usage,
+   so the lanes are always present. Do not fold these back into the block above. */
+@theme static {
   --lane-0: #58a6ff;
   --lane-1: #7ee787;
   --lane-2: #e3b341;
