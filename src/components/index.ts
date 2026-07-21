@@ -17,3 +17,8 @@ export type { MultiFileDiffViewProps } from './MultiFileDiffView'
 
 export { CommitDetailPanel } from './CommitDetailPanel'
 export type { CommitDetailPanelProps } from './CommitDetailPanel'
+
+// The host file-open seam (ADR-0026: one descriptor) shared by MultiFileDiffView
+// and CommitDetailPanel — a host wires `onOpenFile` on either to open a changed
+// file in its own surface without scraping the diff view's internal DOM.
+export type { OpenFileHandler } from './fileStatus'

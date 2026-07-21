@@ -2,7 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { IconChevronDown, IconChevronRight } from '@tabler/icons-react'
 import type { CommitFileChange, FileDiff as FileDiffPayload } from '../../shared/git.schema'
 import { FileDiff } from './FileDiff'
-import { FileLineStats, FileStatusIcon, describeFileChange } from './fileStatus'
+import {
+  FileLineStats,
+  FileStatusIcon,
+  OpenFileButton,
+  describeFileChange,
+  type OpenFileHandler,
+} from './fileStatus'
 
 // A whole change set — a commit, or a branch comparison — rendered as a file
 // list on top and every file's diff stacked below. Like the other diff
@@ -132,6 +138,14 @@ export type MultiFileDiffViewProps = {
    * unchanged; an embedding host with a live theme passes its resolved scheme.
    */
   diffViewTheme?: 'light' | 'dark'
+  /**
+   * Optional host seam (ADR-0026): when provided, each file-list row shows a
+   * distinct "open this file" control that invokes it with the file — for a host
+   * that opens the changed file in its own surface (e.g. an in-app file browser).
+   * It never hijacks the file-name jump link or a section's collapse toggle; omit
+   * it and the control is absent, exactly as the standalone app renders today.
+   */
+  onOpenFile?: OpenFileHandler
 }
 
 export function MultiFileDiffView({
@@ -141,6 +155,7 @@ export function MultiFileDiffView({
   emptyMessage,
   mode = 'split',
   diffViewTheme = 'dark',
+  onOpenFile,
 }: MultiFileDiffViewProps) {
   const totalAdditions = files.reduce((sum, file) => sum + (file.additions ?? 0), 0)
   const totalDeletions = files.reduce((sum, file) => sum + (file.deletions ?? 0), 0)
@@ -167,10 +182,10 @@ export function MultiFileDiffView({
         </div>
         <ul className="max-h-64 overflow-auto py-1">
           {files.map((file, index) => (
-            <li key={`${file.previousPath ?? ''}${file.path}`}>
+            <li key={`${file.previousPath ?? ''}${file.path}`} className="flex items-center">
               <a
                 href={`#${anchorId(index)}`}
-                className="flex items-center gap-2 px-3 py-1 hover:bg-rowhover"
+                className="flex min-w-0 flex-1 items-center gap-2 px-3 py-1 hover:bg-rowhover"
                 title={describeFileChange(file)}
               >
                 <FileStatusIcon status={file.status} size={13} />
@@ -186,6 +201,9 @@ export function MultiFileDiffView({
                   <FileLineStats additions={file.additions} deletions={file.deletions} />
                 )}
               </a>
+              {/* The host's open-file seam (ADR-0031: on the row it opens), a
+                  sibling of the jump link so it never triggers the anchor scroll. */}
+              {onOpenFile && <OpenFileButton file={file} onOpenFile={onOpenFile} className="mr-2" />}
             </li>
           ))}
         </ul>

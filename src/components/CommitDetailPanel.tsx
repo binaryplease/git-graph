@@ -3,7 +3,13 @@ import { IconBinary, IconChevronDown, IconChevronRight, IconExternalLink, IconGi
 import type { CommitDetail, CommitFileChange, FileDiff as FileDiffPayload } from '../../shared/git.schema'
 import { CopyButton } from './CopyButton'
 import { FileDiff } from './FileDiff'
-import { FileLineStats, FileStatusIcon, describeFileChange } from './fileStatus'
+import {
+  FileLineStats,
+  FileStatusIcon,
+  OpenFileButton,
+  describeFileChange,
+  type OpenFileHandler,
+} from './fileStatus'
 import { RefPill, classifyRef, refName } from './RefPill'
 
 // The commit detail surface: one commit in, its metadata, message and changed
@@ -51,6 +57,8 @@ type FileChangeRowProps = {
   diff: FileDiffPayload | null
   isLoadingDiff: boolean
   diffError: string | null
+  /** The host's open-file seam; when set, the row shows a distinct open-file control. */
+  onOpenFile?: OpenFileHandler
 }
 
 /**
@@ -68,6 +76,7 @@ function FileChangeRow({
   diff,
   isLoadingDiff,
   diffError,
+  onOpenFile,
 }: FileChangeRowProps) {
   const description = describeFileChange(file)
   const ChevronIcon = isExpanded ? IconChevronDown : IconChevronRight
@@ -143,6 +152,9 @@ function FileChangeRow({
             <IconExternalLink size={14} aria-hidden />
           </span>
         )}
+        {/* The host's open-file seam (ADR-0031: on the row it opens), distinct
+            from the inline-diff toggle and the open-in-new-tab link above. */}
+        {onOpenFile && <OpenFileButton file={file} onOpenFile={onOpenFile} />}
         <CopyButton value={file.path} label="file path" />
         {file.binary ? (
           <IconBinary size={13} className="shrink-0 text-faint" aria-label="binary file" />
@@ -198,6 +210,14 @@ export type CommitDetailPanelProps = {
   isLoadingFileDiff: boolean
   fileDiffError: string | null
   onClose: () => void
+  /**
+   * Optional host seam (ADR-0026): when provided, each changed-file row shows a
+   * distinct "open this file" control that invokes it with the file — for a host
+   * that opens the file in its own surface (e.g. an in-app file browser). It never
+   * hijacks the row's inline-diff disclosure or its open-in-new-tab link; omit it
+   * and the control is absent, exactly as the standalone app renders today.
+   */
+  onOpenFile?: OpenFileHandler
 }
 
 export function CommitDetailPanel({
@@ -216,6 +236,7 @@ export function CommitDetailPanel({
   isLoadingFileDiff,
   fileDiffError,
   onClose,
+  onOpenFile,
 }: CommitDetailPanelProps) {
   const commitDiffHref = buildCommitDiffHref()
   const authored = formatCommitDate(detail?.authorDate ?? '')
@@ -420,6 +441,7 @@ export function CommitDetailPanel({
                       diff={isExpanded ? fileDiff : null}
                       isLoadingDiff={isExpanded && isLoadingFileDiff}
                       diffError={isExpanded ? fileDiffError : null}
+                      onOpenFile={onOpenFile}
                     />
                   )
                 })}

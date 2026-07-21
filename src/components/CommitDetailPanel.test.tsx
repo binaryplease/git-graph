@@ -174,6 +174,36 @@ describe('CommitDetailPanel open-in-new-tab affordance', () => {
   })
 })
 
+describe('CommitDetailPanel host open-file seam', () => {
+  /** The open-file control's accessible name is `open <path>`, exactly. */
+  const openFileControlFor = (filePath: string) =>
+    screen.getByRole('button', { name: `open ${filePath}` })
+
+  test('no open-file control without the seam (default standalone render)', () => {
+    renderPanel()
+    expect(screen.queryByRole('button', { name: 'open src/App.tsx' })).toBeNull()
+  })
+
+  test('onOpenFile fires with the file and does not toggle the inline diff', () => {
+    const opened: CommitFileChange[] = []
+    const { toggled } = renderPanel({ onOpenFile: (file) => opened.push(file) })
+
+    fireEvent.click(openFileControlFor('src/App.tsx'))
+
+    expect(opened).toHaveLength(1)
+    expect(opened[0]?.path).toBe('src/App.tsx')
+    // The seam is distinct from the row's inline-diff disclosure — opening the
+    // file never asks the host to toggle the diff.
+    expect(toggled).toEqual([])
+  })
+
+  test('the seam control is offered on every row, binary included', () => {
+    renderPanel({ onOpenFile: () => {} })
+    // A binary row has no diff to open, but the host can still open the file.
+    expect(screen.getByRole('button', { name: 'open assets/logo.png' })).toBeTruthy()
+  })
+})
+
 describe('CommitDetailPanel full-commit and compare affordances', () => {
   test('the file list links to the whole commit’s diff in a new tab', () => {
     renderPanel()

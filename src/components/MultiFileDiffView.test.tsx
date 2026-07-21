@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { CommitFileChange, FileDiff } from '../../shared/git.schema'
 import { MultiFileDiffView } from './MultiFileDiffView'
 
@@ -86,6 +86,42 @@ describe('MultiFileDiffView', () => {
     await waitFor(() => expect(screen.getByText(/No textual changes/)).toBeTruthy())
     expect(requested).toEqual(['src/x.ts'])
     expect(screen.getByText('Binary file — git reports no line-by-line diff.')).toBeTruthy()
+  })
+
+  // The seam is independent of the lazy diff load, so these use the binary
+  // fixture — no diff to fetch, no async load to settle around the assertion.
+  test('with no onOpenFile there is no open-file control (default standalone render)', () => {
+    render(
+      <MultiFileDiffView
+        files={[binaryFile]}
+        filesTruncated={false}
+        loadFileDiff={() => Promise.reject(new Error('should not be called'))}
+        emptyMessage="no changes"
+      />,
+    )
+    expect(screen.queryByRole('button', { name: 'open img.png' })).toBeNull()
+  })
+
+  test('a host onOpenFile adds a distinct control that fires with the file, leaving the jump link intact', () => {
+    const opened: CommitFileChange[] = []
+    render(
+      <MultiFileDiffView
+        files={[binaryFile]}
+        filesTruncated={false}
+        loadFileDiff={() => Promise.reject(new Error('should not be called'))}
+        emptyMessage="no changes"
+        onOpenFile={(file) => opened.push(file)}
+      />,
+    )
+
+    // The seam is a separate control from the file-name jump link, so activating
+    // it opens the file without ever touching the anchor's in-diff scroll.
+    const openControl = screen.getByRole('button', { name: 'open img.png' })
+    fireEvent.click(openControl)
+    expect(opened).toEqual([binaryFile])
+
+    const jumpLink = screen.getByRole('link', { name: /img\.png/ })
+    expect(jumpLink.getAttribute('href')).toBe('#file-0')
   })
 
   test('renders the empty message when nothing changed', () => {

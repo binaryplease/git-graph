@@ -3,6 +3,7 @@ import {
   IconFileDiff,
   IconFileMinus,
   IconFilePlus,
+  IconFileSymlink,
   IconFileUnknown,
 } from '@tabler/icons-react'
 import type { CommitFileChange, FileChangeStatus } from '../../shared/git.schema'
@@ -38,6 +39,40 @@ export const FILE_STATUS_COLORS: Record<FileChangeStatus, string> = {
 export function FileStatusIcon({ status, size = 14 }: { status: FileChangeStatus; size?: number }) {
   const Icon = FILE_STATUS_ICONS[status]
   return <Icon size={size} className={`shrink-0 ${FILE_STATUS_COLORS[status]}`} aria-label={status} />
+}
+
+/** How a host opens one changed file in its own surface (ADR-0026: one descriptor). */
+export type OpenFileHandler = (file: CommitFileChange) => void
+
+/**
+ * The "open this file in the host's own surface" control — the callback seam a
+ * host (e.g. an in-app file browser) wires through `onOpenFile`. It is a DISTINCT
+ * affordance from the primary file-name click and from any open-diff-in-new-tab
+ * link, so it never hijacks either; it is rendered only when a host supplies the
+ * handler and sits on the row it opens (ADR-0031). Shared once (ADR-0026/0028) by
+ * every changed-file list rather than re-declared per surface — the icon and its
+ * interaction-state styling stay identical wherever the seam appears.
+ */
+export function OpenFileButton({
+  file,
+  onOpenFile,
+  className = '',
+}: {
+  file: CommitFileChange
+  onOpenFile: OpenFileHandler
+  className?: string
+}) {
+  return (
+    <button
+      type="button"
+      className={`inline-flex shrink-0 cursor-pointer items-center rounded p-0.5 text-faint transition-colors hover:bg-rowhover hover:text-fg ${className}`}
+      onClick={() => onOpenFile(file)}
+      title={`open ${file.path}`}
+      aria-label={`open ${file.path}`}
+    >
+      <IconFileSymlink size={14} aria-hidden />
+    </button>
+  )
 }
 
 /** A one-line description of a change, e.g. `renamed: old.ts → new.ts`. */
