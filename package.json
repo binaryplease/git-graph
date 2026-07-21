@@ -3,6 +3,13 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "//exports": "Render layer as embeddable subpaths (ADR-0027: the invariant — renderer + schema + layout — is the unit of sharing). A host (nightshift-ui) maps these over a Vite source-alias, the pattern binp-file-explorer's ./mount uses. Stays private: true — source-aliased, never published.",
+  "exports": {
+    "./components": "./src/components/index.ts",
+    "./shared": "./shared/index.ts",
+    "./highlighter": "./src/lib/highlighter.ts",
+    "./theme.css": "./src/theme.css"
+  },
   "scripts": {
     "dev": "bunx concurrently -k -n server,client \"bun --watch server/index.ts\" \"bunx vite\"",
     "dev:server": "bun --watch server/index.ts",

@@ -4,7 +4,7 @@ import type { FileDiff as FileDiffPayload } from '../shared/git.schema'
 import { fetchFileDiff } from './lib/api'
 import { loadHighlighter } from './lib/highlighter'
 import { parseFileDiffParams } from './lib/diffRoutes'
-import { FileDiff } from './components/FileDiff'
+import { FileDiff } from './components'
 import { CopyButton } from './components/CopyButton'
 
 // The standalone diff tab — what a cmd/ctrl/middle-click on a changed file

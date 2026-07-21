@@ -5,7 +5,7 @@ import { fetchCommitDetail, fetchFileDiff } from './lib/api'
 import { loadHighlighter } from './lib/highlighter'
 import { parseCommitDiffParams } from './lib/diffRoutes'
 import { DiffTabFrame } from './components/DiffTabFrame'
-import { MultiFileDiffView } from './components/MultiFileDiffView'
+import { MultiFileDiffView } from './components'
 import { CopyButton } from './components/CopyButton'
 
 // The full-commit tab — what "open this commit in a new tab" opens. Like the

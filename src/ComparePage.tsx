@@ -5,7 +5,7 @@ import { fetchBranches, fetchCompareFileDiff, fetchCompareSummary } from './lib/
 import { loadHighlighter } from './lib/highlighter'
 import { compareHref, parseCompareParams } from './lib/diffRoutes'
 import { DiffTabFrame } from './components/DiffTabFrame'
-import { MultiFileDiffView } from './components/MultiFileDiffView'
+import { MultiFileDiffView } from './components'
 
 // The branch-comparison tab — what "compare this branch against main" opens. An
 // omitted base means the repository default branch (resolved on the server), and

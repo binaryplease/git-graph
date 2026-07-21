@@ -17,8 +17,7 @@ import {
 } from './lib/api'
 import { commitDiffHref, compareHref, fileDiffHref } from './lib/diffRoutes'
 import { loadHighlighter } from './lib/highlighter'
-import { CommitGraph, type CommitGraphStats } from './components/CommitGraph'
-import { CommitDetailPanel } from './components/CommitDetailPanel'
+import { CommitGraph, CommitDetailPanel, type CommitGraphStats } from './components'
 
 export function App() {
   const [repositoryList, setRepositoryList] = useState<RepositoryList | null>(null)

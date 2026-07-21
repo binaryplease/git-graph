@@ -1,0 +1,78 @@
+/* Design tokens + the base rules the render components rely on — the single
+   source of truth for the palette, deliberately minimal and neutral so the app
+   can be re-branded later by editing only this block (values ported from the
+   verified prototype). All styling is Tailwind utilities over these tokens; the
+   graph's lane hues live with the renderer (they are data-visualization colors,
+   not chrome).
+
+   Kept in its own file with NO `@import "tailwindcss"` (ADR-0027) so it can be
+   shared two ways over one definition: the standalone app pulls it in after
+   Tailwind via `index.css`, and an embedding host (nightshift-ui) imports
+   `binp-git-graph/theme.css` into *its own* Tailwind build — plus an `@source`
+   over this `src/` so the host emits the utilities the components use — so the
+   mounted graph/diff surface reads with the identical palette without pulling a
+   second `@import "tailwindcss"` into the host bundle.
+
+   The `mark` and `.ref-pill*` rules are the small amount of non-utility styling
+   the components depend on (fuzzy-match highlighting, ADR-0019, and the ref
+   decoration pills), so they travel with the tokens: a host that imports this
+   file gets components that render correctly, exactly as the standalone app. */
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", "Menlo", monospace;
+
+  /* The page behind the standalone frame — one step darker than the canvas so
+     the capped 1440×900 shell reads as a lifted surface, not a letterbox. */
+  --color-backdrop: #06090e;
+  --color-canvas: #0d1117;
+  --color-raised: #161b22;
+  --color-rowhover: #1b2230;
+  /* Selected row — one shared token (ADR-0028) for every surface that marks a
+     selection: graph rows today, anything else that gains one later. */
+  --color-rowselected: #223049;
+  --color-line: #232c38;
+  --color-fg: #e6edf3;
+  --color-dim: #8b949e;
+  --color-faint: #6e7681;
+  --color-accent: #58a6ff;
+  --color-match: #ffd33d;
+}
+
+/* Fuzzy-search matched characters (ADR-0019). */
+mark {
+  background: var(--color-match);
+  color: #05121f;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+/* Ref decoration pills. One base class + a kind class per git ref flavour. */
+.ref-pill {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.ref-head {
+  background: #1f6feb33;
+  color: #79c0ff;
+  border-color: #1f6feb88;
+  font-weight: 600;
+}
+.ref-branch {
+  background: #23863633;
+  color: #7ee787;
+  border-color: #23863688;
+}
+.ref-remote {
+  background: #6e768133;
+  color: #adbac7;
+  border-color: #6e768155;
+}
+.ref-tag {
+  background: #9e6a0333;
+  color: #e3b341;
+  border-color: #9e6a0388;
+}
