@@ -21,7 +21,7 @@ update `backlog.md` — so the next agent inherits the context.
 | Validation | Zod (v4 API via `zod/v4`) | Boundary validation (ADR-0013). Route schemas use Zod, never TypeBox (ADR-0014); schemas double as the OpenAPI spec via `z.toJSONSchema`. |
 | API docs | `@elysiajs/openapi` | ADR-0020: discovery at `GET /api`, Scalar UI at `GET /api/docs`, spec at `GET /api/openapi.json`. |
 | Frontend | React 19 | |
-| Styling | Tailwind CSS v4 | `@tailwindcss/vite` plugin; palette tokens in `src/index.css`. |
+| Styling | Tailwind CSS v4 | `@tailwindcss/vite` plugin; palette + lane tokens in `src/theme.css` (imported by `index.css`, shared verbatim with a host via `binp-git-graph/theme.css`, ADR-0027). Light/dark/system theme re-skins by overriding the same custom properties under `[data-theme="light"]`. |
 | Icons | `@tabler/icons-react` | ADR-0022 — never Unicode characters as icons. |
 | Diff view | `@git-diff-view/react` + `@git-diff-view/shiki` | Pinned exactly at `0.1.7` (pre-1.0). Whole-file tokenization for the diff views (inline unified in the panel, full-tab split for the standalone commit/compare tabs) — beats per-line highlighting (diff2html). First substantial third-party runtime UI dependency; ADR still open (see `.nightshift/backlog.md`). |
 | Build | Vite (client) + Bun bundler (server) | client → `dist/client/`, server → `dist/server/`. |
@@ -86,6 +86,18 @@ consumers (standalone instance · shared package · nightshift-ui module):
   `DiffTabFrame.tsx`. The shells (`App.tsx` and the three pages) own all
   fetching; `lib/diffRoutes.ts` is the single descriptor for the diff-tab URLs
   (ADR-0026) that the panel builds and the pages parse.
+  - App-only chrome (localStorage-backed, deliberately kept out of the host
+    barrel per ADR-0032): `lib/theme.ts` (`useTheme` + Zod-validated persisted
+    mode, default `system`) with `ThemeToggle.tsx`, and `lib/detailLayout.ts`
+    (`useDetailLayout`, default `inline`) with `DetailLayoutToggle.tsx`.
+    `CommitDetailPanel` takes a `variant` (`inline` | `sidebar`) + `headerActions`
+    seam (ADR-0027) and `CommitGraph` a `selectedDetail` inline slot that offsets
+    the SVG for rows below the expansion; the layout algorithm is untouched.
+
+The render layer is importable by subpath — `package.json` `exports` maps
+`./components` (the fetch-free components), `./shared` (schema + layout + fuzzy),
+`./highlighter` (`lib/highlighter.ts`), and `./theme.css`, so nightshift-ui can
+source-alias them (no proxy, no forked copy).
 
 ## Dev commands
 
@@ -105,8 +117,9 @@ merged one correctly compares empty). The `git show`/`git diff` parsers
 (`commitDetail.ts`, `fileDiff.ts`) and the route membership guards — path *and*
 ref — are covered too, and client components have DOM tests (`bunfig.toml`
 preloads happy-dom via `src/test/setup.ts`), including `MultiFileDiffView`'s
-lazy load behind a stubbed IntersectionObserver. Currently 89 tests across 8
-files.
+lazy load behind a stubbed IntersectionObserver, `CommitGraph`'s inline
+`selectedDetail` slot, and `detailLayout`'s schema default/fallback (ADR-0029).
+Currently 110 tests across 10 files.
 
 ## UX conventions
 
@@ -115,6 +128,11 @@ files.
 - ADR-0016: no third-party runtime assets — everything is bundled.
 - ADR-0022: Tabler vectors, never emoji.
 - ADR-0018: port conflicts fail loudly at startup.
+- Theme: light/dark/system toggle in every shell's header (default `system`),
+  persisted (ADR-0029) and applied via `[data-theme]`; a pre-paint shim in
+  `index.html` avoids a flash.
+- Commit detail (ADR-0031): opens inline beneath the selected row by default,
+  with a persisted panel-header toggle back to the docked right sidebar.
 - Diff tabs (ADR-0031): a changed file, a whole commit, and a branch (against
   the default branch unless a base is chosen) each open in a standalone tab —
   via cmd/ctrl/middle-click on the file row, or the visible external-link /

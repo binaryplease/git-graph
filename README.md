@@ -46,6 +46,11 @@ graph with per-lane colours, hollow merge nodes, curved elbow edges, ref pills
 (HEAD / branch / remote / tag), fuzzy search over subject / hash / author with
 matched-character highlighting, and a commits/lanes/matches readout. Selecting a
 commit opens a detail panel — full message, changed files, copy-hash, clickable
-parents — and each changed file expands to an inline, whole-file-tokenized diff.
+parents — inline beneath the row by default (toggle to a docked sidebar), and
+each changed file expands to an inline, whole-file-tokenized diff. A changed
+file, a whole commit, and a branch (compared three-dot against the default) each
+also open in a standalone diff tab. Light / dark / system theme toggle,
+persisted. The render layer is importable by subpath (`binp-git-graph/components`,
+`/shared`, `/theme.css`) for reuse in a host.
 Planned: git actions from the UI (merge branch, checkout, …) and embedding the
 graph component in nightshift-ui.
