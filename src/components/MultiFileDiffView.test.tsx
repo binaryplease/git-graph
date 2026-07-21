@@ -124,6 +124,56 @@ describe('MultiFileDiffView', () => {
     expect(jumpLink.getAttribute('href')).toBe('#file-0')
   })
 
+  // A host that opens the change set focused on one file passes focusFilePath;
+  // the view scrolls that file's section into view. Binary fixtures keep the
+  // lazy diff load out of the assertion.
+  const secondBinaryFile: CommitFileChange = { ...binaryFile, path: 'other.png' }
+
+  test('focusFilePath scrolls the matching section into view', () => {
+    const scrolledIds: string[] = []
+    const originalScroll = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function scrollIntoView() {
+      scrolledIds.push(this.id)
+    }
+    try {
+      render(
+        <MultiFileDiffView
+          files={[binaryFile, secondBinaryFile]}
+          filesTruncated={false}
+          loadFileDiff={() => Promise.reject(new Error('should not be called'))}
+          emptyMessage="no changes"
+          focusFilePath="other.png"
+        />,
+      )
+    } finally {
+      Element.prototype.scrollIntoView = originalScroll
+    }
+    // The section id is derived from the file's index in the list.
+    expect(scrolledIds).toEqual(['file-1'])
+  })
+
+  test('focusFilePath that matches no file is a no-op', () => {
+    const scrolledIds: string[] = []
+    const originalScroll = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function scrollIntoView() {
+      scrolledIds.push(this.id)
+    }
+    try {
+      render(
+        <MultiFileDiffView
+          files={[binaryFile]}
+          filesTruncated={false}
+          loadFileDiff={() => Promise.reject(new Error('should not be called'))}
+          emptyMessage="no changes"
+          focusFilePath="nowhere.png"
+        />,
+      )
+    } finally {
+      Element.prototype.scrollIntoView = originalScroll
+    }
+    expect(scrolledIds).toEqual([])
+  })
+
   test('renders the empty message when nothing changed', () => {
     render(
       <MultiFileDiffView

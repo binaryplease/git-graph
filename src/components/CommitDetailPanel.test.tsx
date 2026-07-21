@@ -174,6 +174,61 @@ describe('CommitDetailPanel open-in-new-tab affordance', () => {
   })
 })
 
+describe('CommitDetailPanel host open-file-diff seam', () => {
+  /** The row's open-diff control, whose accessible name is `open <path> diff`. */
+  const openDiffButtonFor = (filePath: string) =>
+    screen.getByRole('button', { name: `open ${filePath} diff` })
+
+  /** The row's inline-disclosure toggle — the button that carries aria-expanded. */
+  const inlineToggleFor = (filePath: string) => {
+    const match = screen
+      .getAllByRole('button', {
+        name: new RegExp(filePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      })
+      .find((button) => button.hasAttribute('aria-expanded'))
+    if (match === undefined) throw new Error(`no inline toggle for ${filePath}`)
+    return match
+  }
+
+  test('with the seam the per-file control is a button that fires with the path, not a link', () => {
+    const openedPaths: string[] = []
+    const { toggled } = renderPanel({ onOpenFileDiff: (filePath) => openedPaths.push(filePath) })
+
+    // The host owns the destination, so it is an enabled button, not a new-tab link.
+    expect(screen.queryByRole('link', { name: /src\/App\.tsx diff/ })).toBeNull()
+    fireEvent.click(openDiffButtonFor('src/App.tsx'))
+    expect(openedPaths).toEqual(['src/App.tsx'])
+    // The seam is distinct from the inline-diff disclosure.
+    expect(toggled).toEqual([])
+  })
+
+  test('a binary row still shows no open-diff control — nothing to diff', () => {
+    renderPanel({ onOpenFileDiff: () => {} })
+    expect(screen.queryByRole('button', { name: /assets\/logo\.png diff/ })).toBeNull()
+  })
+
+  test('cmd/ctrl-clicking a row routes to the callback and opens no tab', () => {
+    const openedPaths: string[] = []
+    const openedUrls: string[] = []
+    const { toggled } = renderPanel({ onOpenFileDiff: (filePath) => openedPaths.push(filePath) })
+    const originalOpen = window.open
+    window.open = ((url?: string | URL) => {
+      openedUrls.push(String(url))
+      return null
+    }) as typeof window.open
+    try {
+      fireEvent.click(inlineToggleFor('src/App.tsx'), { metaKey: true })
+      fireEvent.click(inlineToggleFor('src/App.tsx'), { ctrlKey: true })
+    } finally {
+      window.open = originalOpen
+    }
+    expect(openedPaths).toEqual(['src/App.tsx', 'src/App.tsx'])
+    // The seam takes precedence over the href, so no new tab and no toggle.
+    expect(openedUrls).toEqual([])
+    expect(toggled).toEqual([])
+  })
+})
+
 describe('CommitDetailPanel host open-file seam', () => {
   /** The open-file control's accessible name is `open <path>`, exactly. */
   const openFileControlFor = (filePath: string) =>
@@ -223,5 +278,27 @@ describe('CommitDetailPanel full-commit and compare affordances', () => {
     // The default branch (main) and the tag are not comparable, so no link.
     expect(screen.queryByRole('link', { name: /compare main against/i })).toBeNull()
     expect(screen.queryByRole('link', { name: /compare v1\.0 against/i })).toBeNull()
+  })
+
+  test('the open-commit-diff seam takes precedence over the href with an enabled button', () => {
+    const opened: string[] = []
+    renderPanel({ onOpenCommitDiff: () => opened.push('commit') })
+    // A button, not a new-tab link.
+    expect(screen.queryByRole('link', { name: /full diff/i })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: "open this commit's full diff" }))
+    expect(opened).toEqual(['commit'])
+  })
+
+  test('the open-compare seam takes precedence with a button carrying the branch name', () => {
+    const compared: string[] = []
+    renderPanel({
+      detail: { ...commitDetail, refs: ['HEAD -> feature', 'tag: v1.0'] },
+      onOpenCompare: (branchName) => compared.push(branchName),
+    })
+    // A button, not a new-tab link; tags stay uncomparable.
+    expect(screen.queryByRole('link', { name: /compare feature against/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /compare v1\.0 against/i })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /compare feature against the default branch/i }))
+    expect(compared).toEqual(['feature'])
   })
 })

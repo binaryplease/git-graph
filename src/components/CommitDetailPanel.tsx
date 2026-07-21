@@ -61,6 +61,14 @@ type FileChangeRowProps = {
   diffViewTheme: 'light' | 'dark'
   /** The host's open-file seam; when set, the row shows a distinct open-file control. */
   onOpenFile?: OpenFileHandler
+  /**
+   * The host's open-this-file's-diff seam (ADR-0026). When set it takes
+   * precedence over {@link diffHref}: the external-link control becomes a real
+   * enabled button that invokes it, and cmd/ctrl/middle-click routes here too —
+   * the host owns the destination (e.g. an in-app modal), so there is no
+   * "new tab". Absent, the row keeps its href-or-disabled behaviour.
+   */
+  onOpenFileDiff?: () => void
 }
 
 /**
@@ -80,17 +88,25 @@ function FileChangeRow({
   diffError,
   diffViewTheme,
   onOpenFile,
+  onOpenFileDiff,
 }: FileChangeRowProps) {
   const description = describeFileChange(file)
   const ChevronIcon = isExpanded ? IconChevronDown : IconChevronRight
   const diffBodyId = `file-diff-${file.path.replace(/[^\w-]/g, '_')}`
 
-  // A modified/ctrl/cmd/middle-click opens the diff in a new tab instead of
-  // toggling it inline; a plain click keeps the inline disclosure.
+  // A modified/ctrl/cmd/middle-click opens the diff away from the inline
+  // disclosure; a plain click keeps it. Precedence matches the visible control:
+  // the host's open-diff seam first, else the new-tab href, else a plain toggle.
   function handleToggleClick(clickEvent: MouseEvent<HTMLButtonElement>) {
-    if (diffHref !== null && (clickEvent.metaKey || clickEvent.ctrlKey)) {
-      window.open(diffHref, '_blank', 'noopener,noreferrer')
-      return
+    if (clickEvent.metaKey || clickEvent.ctrlKey) {
+      if (onOpenFileDiff) {
+        onOpenFileDiff()
+        return
+      }
+      if (diffHref !== null) {
+        window.open(diffHref, '_blank', 'noopener,noreferrer')
+        return
+      }
     }
     onToggle()
   }
@@ -123,10 +139,22 @@ function FileChangeRow({
             {file.path}
           </span>
         </button>
-        {/* ADR-0025: a real, keyboard-reachable control for the new-tab action —
+        {/* ADR-0025: a real, keyboard-reachable control for opening the diff —
             not only the mouse-only modifier gesture — sitting beside the file it
-            opens (ADR-0031). Disabled, not hidden, when there is no diff to open. */}
-        {diffHref !== null ? (
+            opens (ADR-0031). Precedence: the host's open-diff seam (an enabled
+            button, host-owned destination) > the new-tab href > disabled when
+            there is nothing to open. */}
+        {onOpenFileDiff ? (
+          <button
+            type="button"
+            className="inline-flex shrink-0 cursor-pointer items-center rounded p-0.5 text-faint transition-colors hover:bg-rowhover hover:text-fg"
+            onClick={onOpenFileDiff}
+            title={`open ${file.path} diff`}
+            aria-label={`open ${file.path} diff`}
+          >
+            <IconExternalLink size={14} aria-hidden />
+          </button>
+        ) : diffHref !== null ? (
           <a
             href={diffHref}
             target="_blank"
@@ -229,6 +257,30 @@ export type CommitDetailPanelProps = {
    * and the control is absent, exactly as the standalone app renders today.
    */
   onOpenFile?: OpenFileHandler
+  /**
+   * Optional host seam (ADR-0026): open one file's diff in the host's own surface
+   * (e.g. an in-app modal) instead of a new tab. When set it takes precedence over
+   * {@link buildFileDiffHref} — the per-file external-link control becomes an
+   * enabled button and cmd/ctrl/middle-click routes here. Binary files pass no
+   * handler (nothing to diff), so their control stays disabled-and-explained.
+   * Omit it and the row keeps today's href-or-disabled behaviour.
+   */
+  onOpenFileDiff?: (filePath: string) => void
+  /**
+   * Optional host seam (ADR-0026): open the whole commit's diff in the host's own
+   * surface. When set it takes precedence over {@link buildCommitDiffHref} — the
+   * files-changed heading control becomes an enabled button. Omit it and the
+   * heading keeps today's href-or-absent behaviour.
+   */
+  onOpenCommitDiff?: () => void
+  /**
+   * Optional host seam (ADR-0026): compare a branch against the default base in the
+   * host's own surface. When set it takes precedence over {@link buildCompareHref}
+   * — each local-branch ref pill's compare control becomes an enabled button that
+   * invokes it with the branch name. Omit it and the pill keeps today's
+   * href-or-absent behaviour.
+   */
+  onOpenCompare?: (branchName: string) => void
 }
 
 export function CommitDetailPanel({
@@ -249,6 +301,9 @@ export function CommitDetailPanel({
   onClose,
   diffViewTheme = 'dark',
   onOpenFile,
+  onOpenFileDiff,
+  onOpenCommitDiff,
+  onOpenCompare,
 }: CommitDetailPanelProps) {
   const commitDiffHref = buildCommitDiffHref()
   const authored = formatCommitDate(detail?.authorDate ?? '')
@@ -378,15 +433,29 @@ export function CommitDetailPanel({
                       // server's branch listing validates.
                       const branchName = refName(refDecoration)
                       const refKind = classifyRef(refDecoration)
-                      const compareTo =
-                        refKind === 'branch' || refKind === 'head' ? buildCompareHref(branchName) : null
+                      // Only a local branch is comparable; a tag or remote-tracking
+                      // ref is not one the server's branch listing validates.
+                      const isComparableRef = refKind === 'branch' || refKind === 'head'
+                      const compareTo = isComparableRef ? buildCompareHref(branchName) : null
                       return (
                         <span key={refDecoration} className="inline-flex items-center gap-0.5">
                           <RefPill refDecoration={refDecoration} />
                           <CopyButton value={branchName} label="ref name" />
-                          {compareTo !== null && (
-                            // ADR-0031: the compare affordance sits on the branch
-                            // pill it acts on, not in global chrome.
+                          {/* ADR-0031: the compare affordance sits on the branch
+                              pill it acts on, not in global chrome. Precedence: the
+                              host's compare seam (an enabled button, host-owned
+                              destination) > the new-tab href > nothing. */}
+                          {onOpenCompare && isComparableRef ? (
+                            <button
+                              type="button"
+                              className="inline-flex shrink-0 cursor-pointer items-center rounded p-0.5 text-faint transition-colors hover:bg-rowhover hover:text-fg"
+                              onClick={() => onOpenCompare(branchName)}
+                              title={`compare ${branchName} against the default branch`}
+                              aria-label={`compare ${branchName} against the default branch`}
+                            >
+                              <IconGitCompare size={13} aria-hidden />
+                            </button>
+                          ) : compareTo !== null ? (
                             <a
                               href={compareTo}
                               target="_blank"
@@ -397,7 +466,7 @@ export function CommitDetailPanel({
                             >
                               <IconGitCompare size={13} aria-hidden />
                             </a>
-                          )}
+                          ) : null}
                         </span>
                       )
                     })}
@@ -411,20 +480,32 @@ export function CommitDetailPanel({
                 {detail.files.length} file{detail.files.length === 1 ? '' : 's'} changed
                 {detail.filesTruncated && ' (first 500)'}
               </span>
-              {commitDiffHref !== null && detail.files.length > 0 && (
-                // ADR-0031: opening the whole commit's diff belongs beside the
-                // file list it opens, not in remote chrome.
-                <a
-                  href={commitDiffHref}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex shrink-0 cursor-pointer items-center self-center rounded p-0.5 text-faint transition-colors hover:bg-rowhover hover:text-fg"
-                  title="open this commit's full diff in a new tab"
-                  aria-label="open this commit's full diff in a new tab"
-                >
-                  <IconExternalLink size={13} aria-hidden />
-                </a>
-              )}
+              {/* ADR-0031: opening the whole commit's diff belongs beside the
+                  file list it opens, not in remote chrome. Precedence: the host's
+                  open-commit-diff seam (an enabled button) > the new-tab href. */}
+              {detail.files.length > 0 &&
+                (onOpenCommitDiff ? (
+                  <button
+                    type="button"
+                    className="inline-flex shrink-0 cursor-pointer items-center self-center rounded p-0.5 text-faint transition-colors hover:bg-rowhover hover:text-fg"
+                    onClick={onOpenCommitDiff}
+                    title="open this commit's full diff"
+                    aria-label="open this commit's full diff"
+                  >
+                    <IconExternalLink size={13} aria-hidden />
+                  </button>
+                ) : commitDiffHref !== null ? (
+                  <a
+                    href={commitDiffHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex shrink-0 cursor-pointer items-center self-center rounded p-0.5 text-faint transition-colors hover:bg-rowhover hover:text-fg"
+                    title="open this commit's full diff in a new tab"
+                    aria-label="open this commit's full diff in a new tab"
+                  >
+                    <IconExternalLink size={13} aria-hidden />
+                  </a>
+                ) : null)}
               <span className="ml-auto font-mono text-[11px] tabular-nums">
                 {totalAdditions > 0 && <span className="text-[#7ee787]">+{totalAdditions}</span>}
                 {totalAdditions > 0 && totalDeletions > 0 && ' '}
@@ -450,6 +531,11 @@ export function CommitDetailPanel({
                       onToggle={() => onToggleFile(file.path)}
                       // Binary files have no line-by-line diff to open.
                       diffHref={file.binary ? null : buildFileDiffHref(file.path)}
+                      // Gated for binary exactly as diffHref is — a binary row
+                      // keeps its disabled-and-explained control (ADR-0025).
+                      onOpenFileDiff={
+                        file.binary || !onOpenFileDiff ? undefined : () => onOpenFileDiff(file.path)
+                      }
                       diff={isExpanded ? fileDiff : null}
                       isLoadingDiff={isExpanded && isLoadingFileDiff}
                       diffError={isExpanded ? fileDiffError : null}

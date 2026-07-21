@@ -146,6 +146,14 @@ export type MultiFileDiffViewProps = {
    * it and the control is absent, exactly as the standalone app renders today.
    */
   onOpenFile?: OpenFileHandler
+  /**
+   * Optional host seam (ADR-0026): the path of a file to reveal on open. When it
+   * changes to a path present in {@link files}, that file's section is scrolled
+   * into view — for a host that opens the whole change set focused on one file.
+   * It does not disturb the lazy per-section loading (a section still fetches as
+   * it nears the viewport). Absent or unmatched, nothing scrolls.
+   */
+  focusFilePath?: string | null
 }
 
 export function MultiFileDiffView({
@@ -156,9 +164,20 @@ export function MultiFileDiffView({
   mode = 'split',
   diffViewTheme = 'dark',
   onOpenFile,
+  focusFilePath,
 }: MultiFileDiffViewProps) {
   const totalAdditions = files.reduce((sum, file) => sum + (file.additions ?? 0), 0)
   const totalDeletions = files.reduce((sum, file) => sum + (file.deletions ?? 0), 0)
+
+  // Reveal the host-requested file when it changes. A plain scrollIntoView on the
+  // resolved section id — the sections keep their own lazy IntersectionObserver
+  // loading, so bringing one into view just triggers its normal fetch.
+  useEffect(() => {
+    if (focusFilePath === undefined || focusFilePath === null) return
+    const focusIndex = files.findIndex((file) => file.path === focusFilePath)
+    if (focusIndex === -1) return
+    document.getElementById(anchorId(focusIndex))?.scrollIntoView()
+  }, [focusFilePath, files])
 
   if (files.length === 0) return <p className="px-1 py-6 text-faint">{emptyMessage}</p>
 
