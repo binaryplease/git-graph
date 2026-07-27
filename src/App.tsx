@@ -253,7 +253,15 @@ export function App() {
   )
 
   const handleGraphStats = useCallback((stats: CommitGraphStats) => setGraphStats(stats), [])
-  const handleSelectCommit = useCallback((commit: GitCommit) => setSelectedCommitHash(commit.hash), [])
+  // Clicking a row toggles its detail: selecting a new commit opens it, clicking
+  // the already-open one closes it (so the inline expansion collapses on a second
+  // click of its own row). Parent navigation from the panel sets the hash
+  // directly, so it never toggles itself shut.
+  const handleSelectCommit = useCallback(
+    (commit: GitCommit) =>
+      setSelectedCommitHash((currentHash) => (currentHash === commit.hash ? null : commit.hash)),
+    [],
+  )
 
   // The app shell owns the route scheme (App.tsx does all fetching and routing);
   // the panel only turns these strings into links for the file it opens.

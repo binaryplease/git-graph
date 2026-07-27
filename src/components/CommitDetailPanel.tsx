@@ -355,9 +355,18 @@ export function CommitDetailPanel({
       aria-label="Commit details"
     >
       <header className="flex items-start gap-2 border-b border-line px-3 py-2">
-        <h2 className="min-w-0 flex-1 text-[13px] leading-snug font-semibold break-words">
-          {detail?.subject || (error !== null ? 'Commit unavailable' : 'Loading commit…')}
-        </h2>
+        {/* Inline sits directly beneath its commit row, which already shows the
+            subject — repeating it in the header is duplication (ADR-0027: the row
+            owns the title there), so inline drops it and the header carries only
+            its controls. The sidebar is detached from the row, so it keeps the
+            subject as its heading. */}
+        {isInline ? (
+          <div className="min-w-0 flex-1" />
+        ) : (
+          <h2 className="min-w-0 flex-1 text-[13px] leading-snug font-semibold break-words">
+            {detail?.subject || (error !== null ? 'Commit unavailable' : 'Loading commit…')}
+          </h2>
+        )}
         {headerActions}
         <button
           type="button"
