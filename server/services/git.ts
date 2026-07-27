@@ -21,6 +21,7 @@ import {
   UNTRACKED_FILE_DIFF_ARGUMENTS,
   WORKING_FILE_DIFF_ARGUMENTS,
   WORKING_SUMMARY_ARGUMENTS,
+  isBinaryNoIndexPatch,
 } from '../../shared/workingTree'
 import { MAX_FILE_CHANGES, parseCommitFileChanges } from '../../shared/commitDetail'
 import { FIELD_SEPARATOR } from '../../shared/gitLog'
@@ -661,6 +662,14 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
         ])
     if (isUntracked ? patch.exitCode > NO_INDEX_DIFFERENCES_EXIT_CODE : patch.exitCode !== 0) {
       return { ok: false, reason: 'git-failed', detail: patch.stderr.trim() }
+    }
+
+    // A tracked binary is caught up front by its `-` numstat counts, but an
+    // untracked one is only revealed here, by git's binary marker in the
+    // `--no-index` patch. Return the binary notice rather than reading the file
+    // as text (mojibake) and building a line diff from a hunk-less patch.
+    if (isUntracked && isBinaryNoIndexPatch(patch.stdout)) {
+      return { ok: true, diff: { ...base, binary: true } }
     }
 
     // No old blob for an added/untracked file, a deleted file has no new blob,

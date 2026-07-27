@@ -123,14 +123,15 @@ exercises real git against a scratch repository (merge, tags, empty repo,
 truncation, traversal rejection), including branch listing with default-branch
 resolution and three-dot branch comparison (an unmerged fixture branch, since a
 merged one correctly compares empty), plus the working tree (a `dirty-repo`
-fixture with a modified, a deleted, and an untracked file — list, clean, and
-per-file diffs including the `--no-index` untracked case). The `git show`/`git diff` parsers
+fixture with a modified, a deleted, an untracked text, and an untracked binary
+file — list, clean, and per-file diffs including the `--no-index` untracked case
+and the untracked-binary notice). The `git show`/`git diff` parsers
 (`commitDetail.ts`, `fileDiff.ts`) and the route membership guards — path *and*
 ref — are covered too, and client components have DOM tests (`bunfig.toml`
 preloads happy-dom via `src/test/setup.ts`), including `MultiFileDiffView`'s
 lazy load behind a stubbed IntersectionObserver, `CommitGraph`'s inline
 `selectedDetail` slot, and `detailLayout`'s schema default/fallback (ADR-0029).
-Currently 118 tests across 10 files.
+Currently 119 tests across 10 files.
 
 ## UX conventions
 

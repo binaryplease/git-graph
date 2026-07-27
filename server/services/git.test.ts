@@ -89,6 +89,10 @@ beforeAll(() => {
   writeFileSync(join(dirtyRepositoryPath, 'kept.txt'), 'one\ntwo\nthree\n')
   rmSync(join(dirtyRepositoryPath, 'gone.txt'))
   writeFileSync(join(dirtyRepositoryPath, 'fresh.txt'), 'brand new\nfile\n')
+  // An untracked *binary* file: git only reveals its binary-ness when it is
+  // diffed (`--numstat` is not run for untracked files up front), so its diff
+  // must come back as the binary notice, never a text read of raw bytes.
+  writeFileSync(join(dirtyRepositoryPath, 'fresh.bin'), new Uint8Array([0, 1, 2, 3, 0, 255]))
 })
 
 afterAll(() => {
@@ -479,11 +483,17 @@ describe('readWorkingTree', () => {
     if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
     expect(result.working.branch).toBe('main')
     expect(result.working.head).not.toBeNull()
-    expect(result.working.files.map((file) => file.path)).toEqual(['fresh.txt', 'gone.txt', 'kept.txt'])
+    expect(result.working.files.map((file) => file.path)).toEqual([
+      'fresh.bin',
+      'fresh.txt',
+      'gone.txt',
+      'kept.txt',
+    ])
     const byPath = Object.fromEntries(result.working.files.map((file) => [file.path, file]))
     expect(byPath['kept.txt']?.status).toBe('modified')
     expect(byPath['gone.txt']?.status).toBe('deleted')
     expect(byPath['fresh.txt']?.status).toBe('added')
+    expect(byPath['fresh.bin']?.status).toBe('added')
     expect(result.working.filesTruncated).toBe(false)
   })
 
@@ -527,6 +537,15 @@ describe('readWorkingFileDiff', () => {
     if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
     expect(result.diff.status).toBe('deleted')
     expect(result.diff.oldSource).toBe('delete me\n')
+    expect(result.diff.newSource).toBeNull()
+  })
+
+  test('reports an untracked binary file as binary, never a text read of its bytes', async () => {
+    const result = await service().readWorkingFileDiff('dirty-repo', 'fresh.bin')
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+    expect(result.diff.binary).toBe(true)
+    expect(result.diff.hunks).toEqual([])
+    expect(result.diff.oldSource).toBeNull()
     expect(result.diff.newSource).toBeNull()
   })
 

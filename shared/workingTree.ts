@@ -67,3 +67,16 @@ export const LIST_UNTRACKED_ARGUMENTS = [
   '--exclude-standard',
   '-z',
 ] as const
+
+/**
+ * Whether a `--no-index` patch is git's binary marker rather than a line diff.
+ * An untracked file's binary-ness is not known until it is diffed (unlike a
+ * tracked file, whose `--numstat` reports `-` counts up front), and for a binary
+ * one git emits a lone `Binary files … differ` line with no `@@` hunk. The
+ * caller must not then read the file as text or hand the hunk-less patch to the
+ * line-diff builder — it returns the binary notice instead, exactly as a binary
+ * tracked file does.
+ */
+export function isBinaryNoIndexPatch(patchText: string): boolean {
+  return /^Binary files .* differ$/m.test(patchText)
+}
