@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { IconGitMerge, IconSearch } from '@tabler/icons-react'
+import { IconCircleCheck, IconGitMerge, IconPencil, IconSearch } from '@tabler/icons-react'
 import type {
   BranchList,
   CommitDetail,
@@ -30,7 +30,10 @@ import { DetailLayoutToggle } from './components/DetailLayoutToggle'
 // The graph's "Uncommitted changes" node — a synthetic row above HEAD, the way
 // mhutchie's Git Graph and GitKraken mark the working tree at the top of
 // history. It is rendered outside CommitGraph so the pinned layout algorithm
-// never sees a non-commit; a dashed node echoes the graph's own SVG markers.
+// never sees a non-commit. The leading glyph states which it is at a glance: a
+// pencil (matching the /working tab's own header) when there are edits to view,
+// a check when the tree is clean — never an ambiguous dashed ring that reads as
+// a spinner or as pending changes. ADR-0022: real icons, not hand-drawn markers.
 // ADR-0031: it sits adjacent to the history it summarises. ADR-0025: when the
 // tree is clean the control stays visible and explains that there is nothing to
 // open, rather than vanishing.
@@ -38,28 +41,17 @@ function UncommittedChangesRow({ working, href }: { working: WorkingTree; href: 
   const fileCount = working.files.length
   const additions = working.files.reduce((sum, file) => sum + (file.additions ?? 0), 0)
   const deletions = working.files.reduce((sum, file) => sum + (file.deletions ?? 0), 0)
-  const marker = (
-    <svg width={32} height={ROW_HEIGHT} className="shrink-0" aria-hidden>
-      <circle
-        cx={16}
-        cy={ROW_HEIGHT / 2}
-        r={5}
-        fill="none"
-        stroke="var(--lane-0)"
-        strokeWidth={2}
-        strokeDasharray="2 2"
-      />
-    </svg>
-  )
 
   if (fileCount === 0) {
     return (
       <div
-        className="flex items-center gap-2 border-b border-dashed border-line pr-4 text-faint"
+        className="flex items-center gap-2 border-b border-line pr-4 text-faint"
         style={{ height: ROW_HEIGHT }}
         title="working tree clean — no uncommitted changes to view"
       >
-        {marker}
+        <span className="flex w-8 shrink-0 items-center justify-center">
+          <IconCircleCheck size={16} aria-hidden />
+        </span>
         <span className="text-[12px]">Working tree clean</span>
       </div>
     )
@@ -70,11 +62,13 @@ function UncommittedChangesRow({ working, href }: { working: WorkingTree; href: 
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="flex items-center gap-2 border-b border-dashed border-line pr-4 hover:bg-rowhover"
+      className="flex items-center gap-2 border-b border-line pr-4 hover:bg-rowhover"
       style={{ height: ROW_HEIGHT }}
       title={`view ${fileCount} uncommitted change${fileCount === 1 ? '' : 's'} in a new tab`}
     >
-      {marker}
+      <span className="flex w-8 shrink-0 items-center justify-center text-accent">
+        <IconPencil size={16} aria-hidden />
+      </span>
       <span className="min-w-0 flex-1 truncate text-[12px] text-accent">
         Uncommitted changes
         <span className="ml-2 text-faint">
