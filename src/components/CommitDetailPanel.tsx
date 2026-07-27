@@ -380,7 +380,11 @@ export function CommitDetailPanel({
           governs). The sidebar is detached from the row, so it keeps a titled
           header with the same controls. */}
       {isInline ? (
-        <div className="absolute top-2 right-2 z-10 flex items-center gap-2 rounded-md bg-raised pb-0.5 pl-3 shadow-sm shadow-black/20">
+        // Not a floating island: the backing is the panel's own bg-raised with no
+        // border/shadow/rounding, so at rest it is invisible chrome in the corner
+        // (just the toggle pill + close), and it only becomes a mask when a row
+        // scrolls up behind it. pl-3 leaves a clean colour gap at that seam.
+        <div className="absolute top-2 right-2 z-10 flex items-center gap-2 bg-raised pl-3">
           {panelControls}
         </div>
       ) : (
