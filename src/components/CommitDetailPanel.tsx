@@ -336,6 +336,24 @@ export function CommitDetailPanel({
   const totalAdditions = (detail?.files ?? []).reduce((sum, file) => sum + (file.additions ?? 0), 0)
   const totalDeletions = (detail?.files ?? []).reduce((sum, file) => sum + (file.deletions ?? 0), 0)
 
+  // The panel's view controls (the host's layout toggle + close). Sidebar hangs
+  // them off its titled header; inline has no title to head a bar, so it floats
+  // the same cluster in the top-right corner instead (below).
+  const panelControls = (
+    <>
+      {headerActions}
+      <button
+        type="button"
+        className="shrink-0 cursor-pointer rounded p-0.5 text-faint hover:bg-rowhover hover:text-fg"
+        onClick={onClose}
+        title="close the details panel (Esc)"
+        aria-label="Close the details panel"
+      >
+        <IconX size={16} aria-hidden />
+      </button>
+    </>
+  )
+
   const Container = isInline ? 'section' : 'aside'
   return (
     <Container
@@ -344,42 +362,39 @@ export function CommitDetailPanel({
       // capped, because a narrow window would otherwise leave the graph too thin
       // to show a commit subject. Inline: a full-width block in the row flow, its
       // height capped so a large commit scrolls in place rather than pushing the
-      // rows below off-screen.
+      // rows below off-screen. Positioned so the inline controls anchor to it.
       className={
         isInline
-          ? 'flex max-h-[65vh] flex-col overflow-hidden border-y border-line bg-raised'
+          ? 'relative flex max-h-[65vh] flex-col overflow-hidden border-y border-line bg-raised'
           : `flex shrink-0 flex-col overflow-hidden border-l border-line bg-raised transition-[width] duration-150 ${
               expandedFilePath !== null ? 'w-[44rem] max-w-[55vw]' : 'w-[26rem]'
             }`
       }
       aria-label="Commit details"
     >
-      <header className="flex items-start gap-2 border-b border-line px-3 py-2">
-        {/* Inline sits directly beneath its commit row, which already shows the
-            subject — repeating it in the header is duplication (ADR-0027: the row
-            owns the title there), so inline drops it and the header carries only
-            its controls. The sidebar is detached from the row, so it keeps the
-            subject as its heading. */}
-        {isInline ? (
-          <div className="min-w-0 flex-1" />
-        ) : (
+      {/* Inline sits directly beneath its commit row, which already shows the
+          subject — repeating it in a header would duplicate it (ADR-0027: the row
+          owns the title there) and strand the controls across an empty bar. So
+          inline drops the header and floats its controls in the top-right corner
+          (ADR-0031: the view-mode toggle still rides on the detail surface it
+          governs). The sidebar is detached from the row, so it keeps a titled
+          header with the same controls. */}
+      {isInline ? (
+        <div className="absolute top-2 right-2 z-10 flex items-center gap-2 rounded-md bg-raised pb-0.5 pl-3 shadow-sm shadow-black/20">
+          {panelControls}
+        </div>
+      ) : (
+        <header className="flex items-start gap-2 border-b border-line px-3 py-2">
           <h2 className="min-w-0 flex-1 text-[13px] leading-snug font-semibold break-words">
             {detail?.subject || (error !== null ? 'Commit unavailable' : 'Loading commit…')}
           </h2>
-        )}
-        {headerActions}
-        <button
-          type="button"
-          className="shrink-0 cursor-pointer rounded p-0.5 text-faint hover:bg-rowhover hover:text-fg"
-          onClick={onClose}
-          title="close the details panel (Esc)"
-          aria-label="Close the details panel"
-        >
-          <IconX size={16} aria-hidden />
-        </button>
-      </header>
+          {panelControls}
+        </header>
+      )}
 
-      <div className="min-h-0 flex-1 overflow-auto px-3 py-2.5">
+      {/* Inline reserves top space so the first content line clears the floating
+          controls; the sidebar's controls live in the header above, so it does not. */}
+      <div className={`min-h-0 flex-1 overflow-auto px-3 pb-2.5 ${isInline ? 'pt-9' : 'pt-2.5'}`}>
         {error !== null && <p className="text-[#ff7b72]">{error}</p>}
         {error === null && detail === null && isLoading && (
           <p className="text-faint">

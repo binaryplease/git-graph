@@ -274,8 +274,27 @@ describe('CommitDetailPanel layout variant', () => {
     expect(toggleFor('src/App.tsx')).toBeTruthy()
   })
 
+  test('the sidebar variant heads the panel with the commit subject', () => {
+    renderPanel({ variant: 'sidebar' })
+    expect(screen.getByRole('heading', { name: 'a commit' })).toBeTruthy()
+  })
+
+  test('the inline variant omits the subject heading — the row above already shows it', () => {
+    renderPanel({ variant: 'inline' })
+    // No duplicated title: the commit row that this block sits beneath owns it.
+    expect(screen.queryByRole('heading', { name: 'a commit' })).toBeNull()
+    // The controls the header used to carry still render (floated, not in a bar).
+    expect(screen.getByRole('button', { name: 'Close the details panel' })).toBeTruthy()
+  })
+
   test('headerActions render in the panel header alongside the close button', () => {
     renderPanel({ headerActions: <button type="button">layout toggle</button> })
+    expect(screen.getByRole('button', { name: 'layout toggle' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Close the details panel' })).toBeTruthy()
+  })
+
+  test('inline still surfaces headerActions and close beside the floating controls', () => {
+    renderPanel({ variant: 'inline', headerActions: <button type="button">layout toggle</button> })
     expect(screen.getByRole('button', { name: 'layout toggle' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Close the details panel' })).toBeTruthy()
   })
