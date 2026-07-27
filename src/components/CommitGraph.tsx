@@ -24,6 +24,27 @@ const laneColor = (laneIndex: number) => `var(--lane-${laneIndex % LANE_COUNT})`
 const laneX = (lane: number) => X_OFFSET + lane * LANE_GAP
 const baseRowY = (row: number) => row * ROW_HEIGHT + ROW_HEIGHT / 2
 
+// The gap between the graph column and a row's text content.
+const ROW_CONTENT_GAP = 8
+
+/** Total width of the graph column for a lane count — the SVG width and the gutter. */
+export function graphColumnWidth(laneCount: number): number {
+  return X_OFFSET * 2 + Math.max(0, laneCount - 1) * LANE_GAP
+}
+
+/**
+ * Left offset where a row's text content (refs/subject) begins for a given lane
+ * count — the exact padding the commit rows use. Exported so a host can align a
+ * non-commit row (the working-tree node above HEAD) with the commit subjects
+ * instead of guessing a fixed inset that drifts as lanes are added.
+ */
+export function graphContentLeft(laneCount: number): number {
+  return graphColumnWidth(laneCount) + ROW_CONTENT_GAP
+}
+
+/** X of the node column (lane 0) — where a host aligns a leading marker with the graph's dots. */
+export const GRAPH_NODE_COLUMN_X = X_OFFSET
+
 // Curve from a child node down to a parent node. When lanes differ, complete
 // the horizontal shift inside the first row (a smooth elbow) then run straight
 // down the parent's lane — so long edges never diagonally cross other columns.
@@ -163,7 +184,7 @@ export function CommitGraph({
   const rowY = (row: number) =>
     baseRowY(row) + (detailAfterRow >= 0 && row > detailAfterRow ? detailHeight : 0)
 
-  const graphWidth = X_OFFSET * 2 + Math.max(0, layout.laneCount - 1) * LANE_GAP
+  const graphWidth = graphColumnWidth(layout.laneCount)
   const totalHeight = commits.length * ROW_HEIGHT + (detailAfterRow >= 0 ? detailHeight : 0)
 
   return (
@@ -224,7 +245,7 @@ export function CommitGraph({
               className={`flex w-full cursor-pointer items-center gap-2 pr-4 text-left whitespace-nowrap hover:bg-rowhover ${
                 commit.hash === selectedHash ? 'bg-rowselected' : ''
               } ${searchQuery && !matched ? 'opacity-25 hover:opacity-60' : ''}`}
-              style={{ height: ROW_HEIGHT, paddingLeft: graphWidth + 8 }}
+              style={{ height: ROW_HEIGHT, paddingLeft: graphContentLeft(layout.laneCount) }}
               onClick={() => onSelectCommit?.(commit)}
             >
               {commit.refs.length > 0 && (

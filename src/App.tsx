@@ -22,7 +22,7 @@ import { loadHighlighter } from './lib/highlighter'
 import { useTheme } from './lib/theme'
 import { useDetailLayout } from './lib/detailLayout'
 import { CommitGraph, CommitDetailPanel, type CommitGraphStats } from './components'
-import { ROW_HEIGHT } from './components/CommitGraph'
+import { GRAPH_NODE_COLUMN_X, ROW_HEIGHT, graphContentLeft } from './components/CommitGraph'
 import { FileLineStats } from './components/fileStatus'
 import { ThemeToggle } from './components/ThemeToggle'
 import { DetailLayoutToggle } from './components/DetailLayoutToggle'
@@ -34,10 +34,24 @@ import { DetailLayoutToggle } from './components/DetailLayoutToggle'
 // pencil (matching the /working tab's own header) when there are edits to view,
 // a check when the tree is clean — never an ambiguous dashed ring that reads as
 // a spinner or as pending changes. ADR-0022: real icons, not hand-drawn markers.
-// ADR-0031: it sits adjacent to the history it summarises. ADR-0025: when the
-// tree is clean the control stays visible and explains that there is nothing to
-// open, rather than vanishing.
-function UncommittedChangesRow({ working, href }: { working: WorkingTree; href: string }) {
+// The text is inset by `graphContentLeft(laneCount)` — the exact padding the
+// commit rows use — so it lines up with the commit subjects below, and the icon
+// sits in the graph gutter aligned to the node column. ADR-0031: adjacent to the
+// history it summarises. ADR-0025: when the tree is clean the control stays
+// visible and explains that there is nothing to open, rather than vanishing.
+const MARKER_SIZE = 16
+const markerStyle = { left: GRAPH_NODE_COLUMN_X - MARKER_SIZE / 2 }
+
+function UncommittedChangesRow({
+  working,
+  href,
+  contentLeft,
+}: {
+  working: WorkingTree
+  href: string
+  /** Left inset for the text, matching the commit rows' `graphContentLeft`. */
+  contentLeft: number
+}) {
   const fileCount = working.files.length
   const additions = working.files.reduce((sum, file) => sum + (file.additions ?? 0), 0)
   const deletions = working.files.reduce((sum, file) => sum + (file.deletions ?? 0), 0)
@@ -45,13 +59,16 @@ function UncommittedChangesRow({ working, href }: { working: WorkingTree; href: 
   if (fileCount === 0) {
     return (
       <div
-        className="flex items-center gap-2 border-b border-line pr-4 text-faint"
-        style={{ height: ROW_HEIGHT }}
+        className="relative flex items-center gap-2 border-b border-line pr-4 text-faint"
+        style={{ height: ROW_HEIGHT, paddingLeft: contentLeft }}
         title="working tree clean — no uncommitted changes to view"
       >
-        <span className="flex w-8 shrink-0 items-center justify-center">
-          <IconCircleCheck size={16} aria-hidden />
-        </span>
+        <IconCircleCheck
+          size={MARKER_SIZE}
+          className="absolute top-1/2 -translate-y-1/2"
+          style={markerStyle}
+          aria-hidden
+        />
         <span className="text-[12px]">Working tree clean</span>
       </div>
     )
@@ -62,13 +79,16 @@ function UncommittedChangesRow({ working, href }: { working: WorkingTree; href: 
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="flex items-center gap-2 border-b border-line pr-4 hover:bg-rowhover"
-      style={{ height: ROW_HEIGHT }}
+      className="relative flex items-center gap-2 border-b border-line pr-4 hover:bg-rowhover"
+      style={{ height: ROW_HEIGHT, paddingLeft: contentLeft }}
       title={`view ${fileCount} uncommitted change${fileCount === 1 ? '' : 's'} in a new tab`}
     >
-      <span className="flex w-8 shrink-0 items-center justify-center text-accent">
-        <IconPencil size={16} aria-hidden />
-      </span>
+      <IconPencil
+        size={MARKER_SIZE}
+        className="absolute top-1/2 -translate-y-1/2 text-accent"
+        style={markerStyle}
+        aria-hidden
+      />
       <span className="min-w-0 flex-1 truncate text-[12px] text-accent">
         Uncommitted changes
         <span className="ml-2 text-faint">
@@ -434,7 +454,11 @@ export function App() {
               repo has no commits yet (a fresh repo's untracked files still
               count as uncommitted changes worth seeing). */}
           {loadError === null && selectedRepository !== null && workingTree !== null && (
-            <UncommittedChangesRow working={workingTree} href={workingHref(selectedRepository)} />
+            <UncommittedChangesRow
+              working={workingTree}
+              href={workingHref(selectedRepository)}
+              contentLeft={graphContentLeft(graphStats.laneCount)}
+            />
           )}
           {loadError !== null && (
             <p className="px-4 py-6 text-[#ff7b72]">
