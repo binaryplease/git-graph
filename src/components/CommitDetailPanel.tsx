@@ -290,10 +290,11 @@ export type CommitDetailPanelProps = {
    */
   variant?: 'sidebar' | 'inline'
   /**
-   * Extra controls for the panel header, rendered between the subject and the
-   * close button (ADR-0031: the detail view's own view-mode toggle rides here,
-   * not in app chrome). The standalone app passes its layout toggle; omit it and
-   * the header is just subject + close, exactly as before.
+   * Optional host seam: extra controls rendered in the panel's control cluster,
+   * before the close button (sidebar: in the titled header; inline: the floating
+   * top-right corner). A host that wants a per-panel action can pass it here; the
+   * standalone app keeps its layout toggle in the app-wide top bar instead, so it
+   * passes nothing and the cluster is just the close button.
    */
   headerActions?: ReactNode
 }
@@ -336,9 +337,9 @@ export function CommitDetailPanel({
   const totalAdditions = (detail?.files ?? []).reduce((sum, file) => sum + (file.additions ?? 0), 0)
   const totalDeletions = (detail?.files ?? []).reduce((sum, file) => sum + (file.deletions ?? 0), 0)
 
-  // The panel's view controls (the host's layout toggle + close). Sidebar hangs
-  // them off its titled header; inline has no title to head a bar, so it floats
-  // the same cluster in the top-right corner instead (below).
+  // The panel's view controls (any host-supplied headerActions + close). Sidebar
+  // hangs them off its titled header; inline has no title to head a bar, so it
+  // floats the same cluster compactly in the top-right corner instead (below).
   const panelControls = (
     <>
       {headerActions}
@@ -374,16 +375,17 @@ export function CommitDetailPanel({
     >
       {/* Inline sits directly beneath its commit row, which already shows the
           subject — repeating it in a header would duplicate it (ADR-0027: the row
-          owns the title there). So inline gives its header no title, just the
-          view controls, right-aligned (ADR-0031: the view-mode toggle rides on
-          the detail surface it governs). A normal-flow header — not a floating
-          absolute island — so the body scrolls cleanly beneath it and no reserved
-          band or masking hack is needed. The sidebar is detached from the row, so
-          it keeps a titled header with the same controls. */}
+          owns the title there). A full-width header bar with only a corner control
+          would strand an empty band across the block, so inline drops the header
+          entirely and floats just the close control in the top-right corner; the
+          body then starts at the very top with no reserved whitespace. Its
+          bg-raised backing masks the rare metadata line or scrolled row that would
+          pass beneath it. The sidebar is detached from the row, so it keeps a
+          titled header carrying the same controls. */}
       {isInline ? (
-        <header className="flex items-center justify-end gap-2 px-3 pt-2">
+        <div className="absolute top-2 right-2 z-10 flex items-center gap-1 bg-raised pl-3">
           {panelControls}
-        </header>
+        </div>
       ) : (
         <header className="flex items-start gap-2 border-b border-line px-3 py-2">
           <h2 className="min-w-0 flex-1 text-[13px] leading-snug font-semibold break-words">
@@ -393,7 +395,7 @@ export function CommitDetailPanel({
         </header>
       )}
 
-      <div className="min-h-0 flex-1 overflow-auto px-3 pt-1.5 pb-2.5">
+      <div className="min-h-0 flex-1 overflow-auto px-3 pt-2 pb-2.5">
         {error !== null && <p className="text-[#ff7b72]">{error}</p>}
         {error === null && detail === null && isLoading && (
           <p className="text-faint">

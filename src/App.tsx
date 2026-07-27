@@ -352,15 +352,13 @@ export function App() {
 
   // Built once so the sidebar and inline mounts render the identical panel — the
   // variant it carries decides its frame (ADR-0027: one component, the detail is
-  // the invariant). The layout toggle rides on the panel's own header (ADR-0031:
-  // a view-mode toggle for the detail surface, not app-global chrome).
+  // the invariant). The layout toggle is an app-wide display preference (persisted
+  // like the theme, settable before any commit is open), so it lives in the app's
+  // top bar beside the theme toggle rather than on the panel's own header.
   const detailPanel =
     selectedCommitHash === null ? null : (
       <CommitDetailPanel
         variant={detailLayout}
-        headerActions={
-          <DetailLayoutToggle detailLayout={detailLayout} onSelectDetailLayout={setDetailLayout} />
-        }
         detail={commitDetail}
         isLoading={isLoadingDetail}
         error={detailError}
@@ -442,6 +440,7 @@ export function App() {
 
             <span className="text-faint tabular-nums">{readout}</span>
 
+            <DetailLayoutToggle detailLayout={detailLayout} onSelectDetailLayout={setDetailLayout} />
             <ThemeToggle themeMode={themeMode} onSelectThemeMode={setThemeMode} />
           </div>
         </header>
