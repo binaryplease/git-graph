@@ -283,7 +283,7 @@ describe('CommitDetailPanel layout variant', () => {
     renderPanel({ variant: 'inline' })
     // No duplicated title: the commit row that this block sits beneath owns it.
     expect(screen.queryByRole('heading', { name: 'a commit' })).toBeNull()
-    // The controls the header used to carry still render (floated, not in a bar).
+    // The controls the header carries still render — a titleless header bar here.
     expect(screen.getByRole('button', { name: 'Close the details panel' })).toBeTruthy()
   })
 
@@ -293,7 +293,7 @@ describe('CommitDetailPanel layout variant', () => {
     expect(screen.getByRole('button', { name: 'Close the details panel' })).toBeTruthy()
   })
 
-  test('inline still surfaces headerActions and close beside the floating controls', () => {
+  test('inline still surfaces headerActions and close in its titleless header', () => {
     renderPanel({ variant: 'inline', headerActions: <button type="button">layout toggle</button> })
     expect(screen.getByRole('button', { name: 'layout toggle' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Close the details panel' })).toBeTruthy()

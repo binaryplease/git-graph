@@ -374,19 +374,16 @@ export function CommitDetailPanel({
     >
       {/* Inline sits directly beneath its commit row, which already shows the
           subject — repeating it in a header would duplicate it (ADR-0027: the row
-          owns the title there) and strand the controls across an empty bar. So
-          inline drops the header and floats its controls in the top-right corner
-          (ADR-0031: the view-mode toggle still rides on the detail surface it
-          governs). The sidebar is detached from the row, so it keeps a titled
-          header with the same controls. */}
+          owns the title there). So inline gives its header no title, just the
+          view controls, right-aligned (ADR-0031: the view-mode toggle rides on
+          the detail surface it governs). A normal-flow header — not a floating
+          absolute island — so the body scrolls cleanly beneath it and no reserved
+          band or masking hack is needed. The sidebar is detached from the row, so
+          it keeps a titled header with the same controls. */}
       {isInline ? (
-        // Not a floating island: the backing is the panel's own bg-raised with no
-        // border/shadow/rounding, so at rest it is invisible chrome in the corner
-        // (just the toggle pill + close), and it only becomes a mask when a row
-        // scrolls up behind it. pl-3 leaves a clean colour gap at that seam.
-        <div className="absolute top-2 right-2 z-10 flex items-center gap-2 bg-raised pl-3">
+        <header className="flex items-center justify-end gap-2 px-3 pt-2">
           {panelControls}
-        </div>
+        </header>
       ) : (
         <header className="flex items-start gap-2 border-b border-line px-3 py-2">
           <h2 className="min-w-0 flex-1 text-[13px] leading-snug font-semibold break-words">
@@ -396,11 +393,7 @@ export function CommitDetailPanel({
         </header>
       )}
 
-      {/* Content starts at the very top in both variants — no reserved band. The
-          inline controls float in the top-right corner where the first content
-          line (a short trailer/hash) never reaches; their bg-raised backing masks
-          the rare long line or scrolled row that would pass beneath them. */}
-      <div className="min-h-0 flex-1 overflow-auto px-3 py-2.5">
+      <div className="min-h-0 flex-1 overflow-auto px-3 pt-1.5 pb-2.5">
         {error !== null && <p className="text-[#ff7b72]">{error}</p>}
         {error === null && detail === null && isLoading && (
           <p className="text-faint">
@@ -416,7 +409,14 @@ export function CommitDetailPanel({
               </pre>
             )}
 
-            <dl className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-baseline gap-x-2 border-t border-line pt-1.5 text-[12px]">
+            {/* The rule above the metadata only earns its place as a separator
+                from the free-text message above it — with no body it sits right
+                under the header and reads as a redundant line, so drop it then. */}
+            <dl
+              className={`grid grid-cols-[5.5rem_minmax(0,1fr)] items-baseline gap-x-2 text-[12px] ${
+                detail.body ? 'border-t border-line pt-1.5' : ''
+              }`}
+            >
               <MetadataRow label="commit">
                 <span className="inline-flex min-w-0 items-center gap-1">
                   {/* The full 40-character hash is the widest thing in the
