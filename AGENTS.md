@@ -47,7 +47,7 @@ consumers (standalone instance · shared package · nightshift-ui module):
 
 - `shared/` — pure data-in/data-out logic with zero DOM or server imports:
   - `git.schema.ts` — the Zod-typed git boundary (ADR-0013): commit log, commit
-    detail, file diff, branch listing, and branch comparison.
+    detail, file diff, branch listing, branch comparison, and the working tree.
   - `graphLayout.ts` — **the algorithm**. Verbatim port of the prototype's
     `computeLayout` (pvigier's active-lane sweep, as used by
     mhutchie/GitLens/GitKraken). Do not "improve" its behaviour without
@@ -64,6 +64,11 @@ consumers (standalone instance · shared package · nightshift-ui module):
     for a branch comparison: a three-dot `base...head` merge-base diff (the
     "what does this branch add" view a PR shows), falling back to two endpoints
     when the branches share no history.
+  - `workingTree.ts` — `git diff` argument shapes + `EMPTY_TREE_HASH` for the
+    working tree (uncommitted changes vs HEAD): a `git diff HEAD` summary reusing
+    the commit-detail parser, plus per-file patch args for tracked files and an
+    `--no-index` variant for untracked ones (`--no-ext-diff --no-textconv` stay
+    load-bearing).
   - `fuzzy.ts` — subsequence fuzzy matcher with matched-character segments
     (ADR-0019).
 - `server/` — Elysia service. `services/git.ts` scans the served root and
@@ -73,17 +78,21 @@ consumers (standalone instance · shared package · nightshift-ui module):
   comparison's own file list, and branch refs against `git for-each-ref`.
   Beyond the log/detail/file-diff routes it serves `GET /api/git/branches`
   (with default-branch resolution), `/api/git/compare` (branch-vs-base file
-  list), and `/api/git/compare/diff` (one file of a comparison).
+  list), `/api/git/compare/diff` (one file of a comparison), and
+  `/api/git/working` + `/api/git/working/diff` (the working tree — uncommitted
+  changes vs HEAD, and one file of it; tracked via `git diff HEAD`, untracked via
+  `git ls-files --others` diffed from `/dev/null`, membership-guarded path).
 - `src/` — React client, one bundle with several entry points that `index.tsx`
   routes on `location.pathname`: the graph shell (`App.tsx`) and the standalone
   diff tabs `FileDiffPage` (`/diff`, one file), `CommitDiffPage` (`/commit`, a
-  whole commit), and `ComparePage` (`/compare`, a branch against a base). Every
+  whole commit), `ComparePage` (`/compare`, a branch against a base), and
+  `WorkingTreePage` (`/working`, uncommitted changes vs HEAD). Every
   rendering piece is fetch-free — `CommitGraph.tsx` (commits in, SVG + rows
   out), `CommitDetailPanel.tsx` (changed files, copy-hash, parent navigation),
   `FileDiff.tsx` (one diff, unified or split by prop), `MultiFileDiffView.tsx`
   (file list on top + per-file diffs loaded lazily as each nears the viewport),
   plus shared tokens in `components/fileStatus.tsx` and chrome in
-  `DiffTabFrame.tsx`. The shells (`App.tsx` and the three pages) own all
+  `DiffTabFrame.tsx`. The shells (`App.tsx` and the four pages) own all
   fetching; `lib/diffRoutes.ts` is the single descriptor for the diff-tab URLs
   (ADR-0026) that the panel builds and the pages parse.
   - App-only chrome (localStorage-backed, deliberately kept out of the host
@@ -113,13 +122,15 @@ plus a fixture pinned to the prototype's exact output. `server/services/git.test
 exercises real git against a scratch repository (merge, tags, empty repo,
 truncation, traversal rejection), including branch listing with default-branch
 resolution and three-dot branch comparison (an unmerged fixture branch, since a
-merged one correctly compares empty). The `git show`/`git diff` parsers
+merged one correctly compares empty), plus the working tree (a `dirty-repo`
+fixture with a modified, a deleted, and an untracked file — list, clean, and
+per-file diffs including the `--no-index` untracked case). The `git show`/`git diff` parsers
 (`commitDetail.ts`, `fileDiff.ts`) and the route membership guards — path *and*
 ref — are covered too, and client components have DOM tests (`bunfig.toml`
 preloads happy-dom via `src/test/setup.ts`), including `MultiFileDiffView`'s
 lazy load behind a stubbed IntersectionObserver, `CommitGraph`'s inline
 `selectedDetail` slot, and `detailLayout`'s schema default/fallback (ADR-0029).
-Currently 110 tests across 10 files.
+Currently 118 tests across 10 files.
 
 ## UX conventions
 

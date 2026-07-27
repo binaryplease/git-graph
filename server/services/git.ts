@@ -14,16 +14,26 @@ import {
   COMPARE_SUMMARY_ARGUMENTS,
   compareRevisionArguments,
 } from '../../shared/compareDiff'
-import { parseCommitFileChanges } from '../../shared/commitDetail'
+import {
+  EMPTY_TREE_HASH,
+  LIST_UNTRACKED_ARGUMENTS,
+  NO_INDEX_DIFFERENCES_EXIT_CODE,
+  UNTRACKED_FILE_DIFF_ARGUMENTS,
+  WORKING_FILE_DIFF_ARGUMENTS,
+  WORKING_SUMMARY_ARGUMENTS,
+} from '../../shared/workingTree'
+import { MAX_FILE_CHANGES, parseCommitFileChanges } from '../../shared/commitDetail'
 import { FIELD_SEPARATOR } from '../../shared/gitLog'
 import type {
   BranchList,
   CommitDetail,
+  CommitFileChange,
   CommitLog,
   CompareSummary,
   FileDiff,
   RepositoryList,
   RepositorySummary,
+  WorkingTree,
 } from '../../shared/git.schema'
 
 export type ReadCommitLogFailureReason = 'unknown-repository' | 'git-failed'
@@ -65,6 +75,18 @@ export type ReadCompareFileDiffFailureReason = ReadCompareFailureReason | 'unkno
 export type ReadCompareFileDiffResult =
   | { ok: true; diff: FileDiff }
   | { ok: false; reason: ReadCompareFileDiffFailureReason; detail?: string }
+
+export type ReadWorkingTreeFailureReason = 'unknown-repository' | 'git-failed'
+
+export type ReadWorkingTreeResult =
+  | { ok: true; working: WorkingTree }
+  | { ok: false; reason: ReadWorkingTreeFailureReason; detail?: string }
+
+export type ReadWorkingFileDiffFailureReason = ReadWorkingTreeFailureReason | 'unknown-file'
+
+export type ReadWorkingFileDiffResult =
+  | { ok: true; diff: FileDiff }
+  | { ok: false; reason: ReadWorkingFileDiffFailureReason; detail?: string }
 
 // Hashes reach `git show` as an argument, so they are re-checked here even
 // though the route schema already validates them — the service is the boundary
@@ -497,6 +519,172 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
     }
   }
 
+  /** The worktree contents of one file, or null when it cannot be read as text. */
+  async function readWorktreeFile(repositoryPath: string, relativePath: string): Promise<string | null> {
+    try {
+      return await Bun.file(join(repositoryPath, relativePath)).text()
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Everything uncommitted in a repository: tracked modifications and deletions
+   * (`git diff HEAD`, which folds the index and the worktree together) plus
+   * untracked files (`git ls-files --others`, since `git diff` never lists files
+   * git has not been told about). Tracked and untracked are disjoint by
+   * construction — a file cannot be both — so the combined list needs no dedup.
+   * The two halves are kept separately as well, because a single file's diff is
+   * read one way for a tracked file and another for an untracked one.
+   */
+  async function collectWorkingChanges(repositoryPath: string) {
+    const headResult = await runGit(repositoryPath, ['rev-parse', '--short', '--verify', 'HEAD'])
+    const head = headResult.exitCode === 0 ? headResult.stdout.trim() || null : null
+    const branchResult = await runGit(repositoryPath, ['symbolic-ref', '--short', '-q', 'HEAD'])
+    const branch = branchResult.exitCode === 0 ? branchResult.stdout.trim() || null : null
+
+    // No HEAD (a repository with no commits yet) → measure against the empty
+    // tree, so every tracked file reads as an addition.
+    const baseRevision = head ?? EMPTY_TREE_HASH
+    const trackedResult = await runGit(repositoryPath, [...WORKING_SUMMARY_ARGUMENTS, baseRevision, '--'])
+    if (trackedResult.exitCode !== 0) {
+      return { ok: false as const, detail: trackedResult.stderr.trim() }
+    }
+    const { files: tracked } = parseCommitFileChanges(trackedResult.stdout)
+
+    const untrackedResult = await runGit(repositoryPath, [...LIST_UNTRACKED_ARGUMENTS])
+    const untracked: CommitFileChange[] =
+      untrackedResult.exitCode === 0
+        ? untrackedResult.stdout
+            .split('\0')
+            .filter((untrackedPath) => untrackedPath.length > 0)
+            .map((untrackedPath) => ({
+              path: untrackedPath,
+              previousPath: null,
+              status: 'added' as const,
+              // git reports no line counts for an untracked file without a
+              // per-file diff; the numbers surface when its diff is opened.
+              additions: null,
+              deletions: null,
+              binary: false,
+            }))
+        : []
+
+    const untrackedPaths = new Set(untracked.map((file) => file.path))
+    const combined = [...tracked, ...untracked].sort((first, second) =>
+      first.path.localeCompare(second.path),
+    )
+    return {
+      ok: true as const,
+      head,
+      branch,
+      baseRevision,
+      untrackedPaths,
+      files: combined.slice(0, MAX_FILE_CHANGES),
+      filesTruncated: combined.length > MAX_FILE_CHANGES,
+    }
+  }
+
+  /** The uncommitted changes of one listed repository — the working-tree file list. */
+  async function readWorkingTree(repositoryRelativePath: string): Promise<ReadWorkingTreeResult> {
+    const repository = await resolveRepository(repositoryRelativePath)
+    if (!repository) return { ok: false, reason: 'unknown-repository' }
+
+    const changes = await collectWorkingChanges(join(servedRoot, repository.relativePath))
+    if (!changes.ok) return { ok: false, reason: 'git-failed', detail: changes.detail }
+
+    return {
+      ok: true,
+      working: {
+        repository: repository.name,
+        head: changes.head,
+        branch: changes.branch,
+        files: changes.files,
+        filesTruncated: changes.filesTruncated,
+      },
+    }
+  }
+
+  /**
+   * The unified patch for one uncommitted file, plus both complete blobs the
+   * patch applies between. `filePath` is validated by **membership** against the
+   * working tree's own file listing, exactly as {@link readFileDiff} validates
+   * against a commit's. The new side is the worktree file read from disk (that is
+   * what "uncommitted" means — the content on disk, past the index); the old side
+   * is the HEAD blob, or nothing for an added or untracked file.
+   */
+  async function readWorkingFileDiff(
+    repositoryRelativePath: string,
+    filePath: string,
+  ): Promise<ReadWorkingFileDiffResult> {
+    const repository = await resolveRepository(repositoryRelativePath)
+    if (!repository) return { ok: false, reason: 'unknown-repository' }
+
+    const repositoryPath = join(servedRoot, repository.relativePath)
+    const changes = await collectWorkingChanges(repositoryPath)
+    if (!changes.ok) return { ok: false, reason: 'git-failed', detail: changes.detail }
+
+    const fileChange = changes.files.find(
+      (candidate) => candidate.path === filePath || candidate.previousPath === filePath,
+    )
+    if (!fileChange) return { ok: false, reason: 'unknown-file' }
+
+    // From here on the paths handed to git are git's own strings, not the
+    // caller's. The old side of a rename lives at the previous path.
+    const newPath = fileChange.path
+    const oldPath = fileChange.previousPath ?? fileChange.path
+    const isUntracked = changes.untrackedPaths.has(newPath)
+
+    const base: FileDiff = {
+      path: newPath,
+      previousPath: fileChange.previousPath,
+      status: fileChange.status,
+      hunks: [],
+      oldSource: null,
+      newSource: null,
+      language: languageForPath(newPath),
+      binary: fileChange.binary,
+      truncated: false,
+    }
+    if (fileChange.binary) return { ok: true, diff: base }
+
+    // An untracked file is absent from every tree, so `git diff HEAD` cannot see
+    // it — it is diffed from `/dev/null` with `--no-index`, which exits 1 (not 0)
+    // precisely when the file has content to show.
+    const patch = isUntracked
+      ? await runGit(repositoryPath, [...UNTRACKED_FILE_DIFF_ARGUMENTS, '--', '/dev/null', newPath])
+      : await runGit(repositoryPath, [
+          ...WORKING_FILE_DIFF_ARGUMENTS,
+          changes.baseRevision,
+          '--',
+          ...(fileChange.previousPath !== null ? [oldPath, newPath] : [newPath]),
+        ])
+    if (isUntracked ? patch.exitCode > NO_INDEX_DIFFERENCES_EXIT_CODE : patch.exitCode !== 0) {
+      return { ok: false, reason: 'git-failed', detail: patch.stderr.trim() }
+    }
+
+    // No old blob for an added/untracked file, a deleted file has no new blob,
+    // and a repository with no HEAD has no old side at all.
+    const hasOldSide = !isUntracked && fileChange.status !== 'added' && changes.head !== null
+    const hasNewSide = fileChange.status !== 'deleted'
+    const [oldBlob, newSource] = await Promise.all([
+      hasOldSide ? runGit(repositoryPath, ['show', `HEAD:${oldPath}`]) : null,
+      hasNewSide ? readWorktreeFile(repositoryPath, newPath) : null,
+    ])
+    const oldSource = oldBlob?.exitCode === 0 ? oldBlob.stdout : null
+
+    const totalBytes =
+      Buffer.byteLength(patch.stdout) +
+      Buffer.byteLength(oldSource ?? '') +
+      Buffer.byteLength(newSource ?? '')
+    if (totalBytes > MAX_FILE_DIFF_BYTES) return { ok: true, diff: { ...base, truncated: true } }
+
+    return {
+      ok: true,
+      diff: { ...base, hunks: splitPatchIntoFileHunks(patch.stdout), oldSource, newSource },
+    }
+  }
+
   return {
     listRepositories,
     readCommitLog,
@@ -505,6 +693,8 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
     readBranches,
     readCompareSummary,
     readCompareFileDiff,
+    readWorkingTree,
+    readWorkingFileDiff,
   }
 }
 

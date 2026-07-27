@@ -7,6 +7,8 @@ import {
   type ReadCompareFailureReason,
   type ReadCompareFileDiffFailureReason,
   type ReadFileDiffFailureReason,
+  type ReadWorkingFileDiffFailureReason,
+  type ReadWorkingTreeFailureReason,
 } from '../services/git'
 import {
   BranchListQuerySchema,
@@ -22,6 +24,9 @@ import {
   FileDiffSchema,
   GitErrorSchema,
   RepositoryListSchema,
+  WorkingFileDiffQuerySchema,
+  WorkingTreeQuerySchema,
+  WorkingTreeSchema,
 } from '../../shared/git.schema'
 
 // Created at startup so a bad GIT_GRAPH_ROOT crashes the boot, not a request.
@@ -104,6 +109,32 @@ function compareFailureStatusAndMessage(
     case 'git-failed':
       return { statusCode: 500, message: `git diff failed: ${detail || 'unknown error'}` }
   }
+}
+
+function workingFailureStatusAndMessage(
+  reason: ReadWorkingTreeFailureReason,
+  repositoryIdentifier: string,
+  detail?: string,
+): { statusCode: 404 | 500; message: string } {
+  if (reason === 'unknown-repository') {
+    return {
+      statusCode: 404,
+      message: `no such repository at the served root: ${repositoryIdentifier || '(root)'}`,
+    }
+  }
+  return { statusCode: 500, message: `git diff failed: ${detail || 'unknown error'}` }
+}
+
+function workingFileDiffFailureStatusAndMessage(
+  reason: ReadWorkingFileDiffFailureReason,
+  repositoryIdentifier: string,
+  filePath: string,
+  detail?: string,
+): { statusCode: 404 | 500; message: string } {
+  if (reason === 'unknown-file') {
+    return { statusCode: 404, message: `the working tree does not touch this file: ${filePath}` }
+  }
+  return workingFailureStatusAndMessage(reason, repositoryIdentifier, detail)
 }
 
 export const gitRoutes = new Elysia()
@@ -322,6 +353,68 @@ export const gitRoutes = new Elysia()
           'merge-base blob, so the diff matches the three-dot summary. The requested `path` must be ' +
           'one the comparison itself reports — a membership check, not a pattern — and an unrelated ' +
           'path is rejected with 404.',
+      },
+    },
+  )
+  .get(
+    '/api/git/working',
+    async ({ query, status }) => {
+      const result = await gitService.readWorkingTree(query.repo)
+      if (!result.ok) {
+        const { statusCode, message } = workingFailureStatusAndMessage(result.reason, query.repo, result.detail)
+        return status(statusCode, { error: message })
+      }
+      return result.working
+    },
+    {
+      query: WorkingTreeQuerySchema,
+      response: {
+        200: WorkingTreeSchema,
+        404: GitErrorSchema,
+        500: GitErrorSchema,
+      },
+      detail: {
+        tags: ['git'],
+        summary: 'List uncommitted changes',
+        description:
+          'Returns the working tree of the identified repository — everything not yet committed: ' +
+          'modifications and deletions to tracked files (staged or not, `git diff HEAD`) plus untracked ' +
+          'files, each an addition, sorted by path. A clean working tree returns an empty file list. In a ' +
+          'repository with no commits yet the changes are measured against the empty tree, so `head` is null.',
+      },
+    },
+  )
+  .get(
+    '/api/git/working/diff',
+    async ({ query, status }) => {
+      const result = await gitService.readWorkingFileDiff(query.repo, query.path)
+      if (!result.ok) {
+        const { statusCode, message } = workingFileDiffFailureStatusAndMessage(
+          result.reason,
+          query.repo,
+          query.path,
+          result.detail,
+        )
+        return status(statusCode, { error: message })
+      }
+      return result.diff
+    },
+    {
+      query: WorkingFileDiffQuerySchema,
+      response: {
+        200: FileDiffSchema,
+        404: GitErrorSchema,
+        500: GitErrorSchema,
+      },
+      detail: {
+        tags: ['git'],
+        summary: 'Diff one uncommitted file',
+        description:
+          'Returns the unified patch and both complete blobs for a single uncommitted file. The new side ' +
+          'is the worktree file on disk (past the index — that is what "uncommitted" means); the old side ' +
+          'is the HEAD blob, or nothing for an added or untracked file. The requested `path` must be one ' +
+          'the working tree itself reports — a membership check, not a pattern — and an unrelated path is ' +
+          'rejected with 404.',
       },
     },
   )

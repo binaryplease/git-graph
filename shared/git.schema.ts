@@ -294,6 +294,52 @@ export const CompareFileDiffQuerySchema = CompareQuerySchema.extend({
 })
 export type CompareFileDiffQuery = z.infer<typeof CompareFileDiffQuerySchema>
 
+export const WorkingTreeSchema = z.object({
+  repository: z.string().describe('Display name of the repository the working tree was read from.'),
+  head: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe(
+      'Abbreviated hash of HEAD — the commit the uncommitted changes are measured against; null in a ' +
+        'repository with no commits yet, where every tracked file reads as an addition (ADR-0024).',
+    ),
+  branch: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe('The checked-out branch name, or null when HEAD is detached or the repository is empty (ADR-0024).'),
+  files: z
+    .array(CommitFileChangeSchema)
+    .default([])
+    .describe(
+      'Uncommitted changes, sorted by path: modifications and deletions to tracked files (staged or not — ' +
+        '`git diff HEAD` folds the index and the worktree together) plus untracked files, each an addition. ' +
+        'Empty for a clean working tree.',
+    ),
+  filesTruncated: z
+    .boolean()
+    .default(false)
+    .describe('True when the working tree touches more files than the service returns.'),
+})
+export type WorkingTree = z.infer<typeof WorkingTreeSchema>
+
+export const WorkingTreeQuerySchema = z.object({
+  repo: z.string().default('').describe('Repository identifier: the `relativePath` from the repository listing.'),
+})
+export type WorkingTreeQuery = z.infer<typeof WorkingTreeQuerySchema>
+
+export const WorkingFileDiffQuerySchema = WorkingTreeQuerySchema.extend({
+  path: z
+    .string()
+    .min(1)
+    .describe(
+      'Repository-relative path of the working-tree file to diff. Validated by membership: it must be one of ' +
+        'the paths the working tree itself reports (or the `previousPath` of a rename), never by pattern.',
+    ),
+})
+export type WorkingFileDiffQuery = z.infer<typeof WorkingFileDiffQuerySchema>
+
 export const GitErrorSchema = z.object({
   error: z.string().describe('Human-readable description of what went wrong.'),
 })

@@ -5,12 +5,14 @@ import {
   CompareSummarySchema,
   FileDiffSchema,
   RepositoryListSchema,
+  WorkingTreeSchema,
   type BranchList,
   type CommitDetail,
   type CommitLog,
   type CompareSummary,
   type FileDiff,
   type RepositoryList,
+  type WorkingTree,
 } from '../../shared/git.schema'
 
 async function requestJson(path: string): Promise<unknown> {
@@ -88,4 +90,17 @@ export async function fetchCompareFileDiff(
   const query = new URLSearchParams({ repo: repositoryRelativePath, head: headBranch, path: filePath })
   if (baseBranch) query.set('base', baseBranch)
   return FileDiffSchema.parse(await requestJson(`/api/git/compare/diff?${query}`))
+}
+
+export async function fetchWorkingTree(repositoryRelativePath: string): Promise<WorkingTree> {
+  const query = new URLSearchParams({ repo: repositoryRelativePath })
+  return WorkingTreeSchema.parse(await requestJson(`/api/git/working?${query}`))
+}
+
+export async function fetchWorkingFileDiff(
+  repositoryRelativePath: string,
+  filePath: string,
+): Promise<FileDiff> {
+  const query = new URLSearchParams({ repo: repositoryRelativePath, path: filePath })
+  return FileDiffSchema.parse(await requestJson(`/api/git/working/diff?${query}`))
 }

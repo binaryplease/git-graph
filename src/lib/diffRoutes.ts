@@ -6,10 +6,12 @@
 //   /diff    — one file of one commit
 //   /commit  — a whole commit (file list + every file's diff)
 //   /compare — a branch against a base (default: the repository default branch)
+//   /working — the working tree (uncommitted changes vs HEAD)
 
 export const FILE_DIFF_ROUTE = '/diff'
 export const COMMIT_DIFF_ROUTE = '/commit'
 export const COMPARE_ROUTE = '/compare'
+export const WORKING_ROUTE = '/working'
 
 /** The URL of the standalone diff view for one file of one commit. */
 export function fileDiffHref(
@@ -91,4 +93,24 @@ export function parseCompareParams(search: string): CompareRouteParams | null {
     headBranch,
     baseBranch: parameters.get('base') ?? '',
   }
+}
+
+/** The URL of the working-tree tab — every uncommitted change and its diff. */
+export function workingHref(repositoryRelativePath: string): string {
+  const query = new URLSearchParams({ repo: repositoryRelativePath })
+  return `${WORKING_ROUTE}?${query}`
+}
+
+export type WorkingRouteParams = {
+  repositoryRelativePath: string
+}
+
+/**
+ * Parse a working-tree URL's query. There is nothing required beyond the repo —
+ * an empty `repo` is valid (the served root is itself a repository) — so this
+ * always yields params rather than null, defaulting to the root repository.
+ */
+export function parseWorkingParams(search: string): WorkingRouteParams {
+  const parameters = new URLSearchParams(search)
+  return { repositoryRelativePath: parameters.get('repo') ?? '' }
 }

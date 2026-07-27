@@ -76,6 +76,19 @@ beforeAll(() => {
   runGit(filesRepositoryPath, 'add', '-A')
   runGit(filesRepositoryPath, 'commit', '-m', 'feature-only commit')
   runGit(filesRepositoryPath, 'checkout', 'main')
+
+  // A repository with a dirty working tree, for the uncommitted-changes tests: a
+  // committed base, then a modification, a deletion, and an untracked file left
+  // uncommitted.
+  const dirtyRepositoryPath = join(scratchRoot, 'dirty-repo')
+  runGit(scratchRoot, 'init', '-b', 'main', dirtyRepositoryPath)
+  writeFileSync(join(dirtyRepositoryPath, 'kept.txt'), 'one\ntwo\n')
+  writeFileSync(join(dirtyRepositoryPath, 'gone.txt'), 'delete me\n')
+  runGit(dirtyRepositoryPath, 'add', '-A')
+  runGit(dirtyRepositoryPath, 'commit', '-m', 'base for the dirty tree')
+  writeFileSync(join(dirtyRepositoryPath, 'kept.txt'), 'one\ntwo\nthree\n')
+  rmSync(join(dirtyRepositoryPath, 'gone.txt'))
+  writeFileSync(join(dirtyRepositoryPath, 'fresh.txt'), 'brand new\nfile\n')
 })
 
 afterAll(() => {
@@ -92,6 +105,7 @@ describe('createGitService', () => {
     const { rootPath, repositories } = await service.listRepositories()
     expect(rootPath).toBe(scratchRoot)
     expect(repositories).toEqual([
+      { name: 'dirty-repo', relativePath: 'dirty-repo' },
       { name: 'empty-repo', relativePath: 'empty-repo' },
       { name: 'files-repo', relativePath: 'files-repo' },
       { name: 'sample-repo', relativePath: 'sample-repo' },
@@ -453,6 +467,82 @@ describe('readCompareFileDiff', () => {
     expect(await service().readCompareFileDiff('files-repo', 'nope', '', 'c.txt')).toMatchObject({
       ok: false,
       reason: 'unknown-ref',
+    })
+  })
+})
+
+describe('readWorkingTree', () => {
+  const service = () => createGitService({ rootAbsolutePath: scratchRoot })
+
+  test('lists modified, deleted, and untracked files, sorted by path', async () => {
+    const result = await service().readWorkingTree('dirty-repo')
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+    expect(result.working.branch).toBe('main')
+    expect(result.working.head).not.toBeNull()
+    expect(result.working.files.map((file) => file.path)).toEqual(['fresh.txt', 'gone.txt', 'kept.txt'])
+    const byPath = Object.fromEntries(result.working.files.map((file) => [file.path, file]))
+    expect(byPath['kept.txt']?.status).toBe('modified')
+    expect(byPath['gone.txt']?.status).toBe('deleted')
+    expect(byPath['fresh.txt']?.status).toBe('added')
+    expect(result.working.filesTruncated).toBe(false)
+  })
+
+  test('reports a clean working tree as an empty file list', async () => {
+    const result = await service().readWorkingTree('sample-repo')
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+    expect(result.working.files).toEqual([])
+  })
+
+  test('rejects an unknown repository', async () => {
+    expect(await service().readWorkingTree('no-such-repo')).toMatchObject({
+      ok: false,
+      reason: 'unknown-repository',
+    })
+  })
+})
+
+describe('readWorkingFileDiff', () => {
+  const service = () => createGitService({ rootAbsolutePath: scratchRoot })
+
+  test('diffs a modified file: HEAD blob on the old side, worktree content on the new', async () => {
+    const result = await service().readWorkingFileDiff('dirty-repo', 'kept.txt')
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+    expect(result.diff.status).toBe('modified')
+    expect(result.diff.oldSource).toBe('one\ntwo\n')
+    expect(result.diff.newSource).toBe('one\ntwo\nthree\n')
+    expect(result.diff.hunks[0]).toContain('+three')
+  })
+
+  test('diffs an untracked file as a full addition', async () => {
+    const result = await service().readWorkingFileDiff('dirty-repo', 'fresh.txt')
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+    expect(result.diff.status).toBe('added')
+    expect(result.diff.oldSource).toBeNull()
+    expect(result.diff.newSource).toBe('brand new\nfile\n')
+    expect(result.diff.hunks[0]).toContain('+brand new')
+  })
+
+  test('diffs a deleted file: HEAD blob on the old side, nothing on the new', async () => {
+    const result = await service().readWorkingFileDiff('dirty-repo', 'gone.txt')
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+    expect(result.diff.status).toBe('deleted')
+    expect(result.diff.oldSource).toBe('delete me\n')
+    expect(result.diff.newSource).toBeNull()
+  })
+
+  test('rejects a path the working tree does not touch', async () => {
+    for (const outsidePath of ['kept-but-clean.txt', '../../etc/passwd', '.git/config']) {
+      expect(await service().readWorkingFileDiff('dirty-repo', outsidePath)).toMatchObject({
+        ok: false,
+        reason: 'unknown-file',
+      })
+    }
+  })
+
+  test('rejects an unknown repository before reaching a file', async () => {
+    expect(await service().readWorkingFileDiff('no-such-repo', 'kept.txt')).toMatchObject({
+      ok: false,
+      reason: 'unknown-repository',
     })
   })
 })

@@ -5,7 +5,8 @@ import { App } from './App'
 import { FileDiffPage } from './FileDiffPage'
 import { CommitDiffPage } from './CommitDiffPage'
 import { ComparePage } from './ComparePage'
-import { COMMIT_DIFF_ROUTE, COMPARE_ROUTE, FILE_DIFF_ROUTE } from './lib/diffRoutes'
+import { WorkingTreePage } from './WorkingTreePage'
+import { COMMIT_DIFF_ROUTE, COMPARE_ROUTE, FILE_DIFF_ROUTE, WORKING_ROUTE } from './lib/diffRoutes'
 
 // One bundle, several entry points: the graph shell plus the standalone diff
 // tabs a change opens in a new tab. The server's SPA fallback serves this same
@@ -14,6 +15,7 @@ function routeFor(pathname: string) {
   if (pathname === FILE_DIFF_ROUTE) return <FileDiffPage />
   if (pathname === COMMIT_DIFF_ROUTE) return <CommitDiffPage />
   if (pathname === COMPARE_ROUTE) return <ComparePage />
+  if (pathname === WORKING_ROUTE) return <WorkingTreePage />
   return <App />
 }
 

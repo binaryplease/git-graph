@@ -7,6 +7,7 @@ import type {
   FileDiff,
   GitCommit,
   RepositoryList,
+  WorkingTree,
 } from '../shared/git.schema'
 import {
   fetchBranches,
@@ -14,14 +15,77 @@ import {
   fetchCommitLog,
   fetchFileDiff,
   fetchRepositories,
+  fetchWorkingTree,
 } from './lib/api'
-import { commitDiffHref, compareHref, fileDiffHref } from './lib/diffRoutes'
+import { commitDiffHref, compareHref, fileDiffHref, workingHref } from './lib/diffRoutes'
 import { loadHighlighter } from './lib/highlighter'
 import { useTheme } from './lib/theme'
 import { useDetailLayout } from './lib/detailLayout'
 import { CommitGraph, CommitDetailPanel, type CommitGraphStats } from './components'
+import { ROW_HEIGHT } from './components/CommitGraph'
+import { FileLineStats } from './components/fileStatus'
 import { ThemeToggle } from './components/ThemeToggle'
 import { DetailLayoutToggle } from './components/DetailLayoutToggle'
+
+// The graph's "Uncommitted changes" node — a synthetic row above HEAD, the way
+// mhutchie's Git Graph and GitKraken mark the working tree at the top of
+// history. It is rendered outside CommitGraph so the pinned layout algorithm
+// never sees a non-commit; a dashed node echoes the graph's own SVG markers.
+// ADR-0031: it sits adjacent to the history it summarises. ADR-0025: when the
+// tree is clean the control stays visible and explains that there is nothing to
+// open, rather than vanishing.
+function UncommittedChangesRow({ working, href }: { working: WorkingTree; href: string }) {
+  const fileCount = working.files.length
+  const additions = working.files.reduce((sum, file) => sum + (file.additions ?? 0), 0)
+  const deletions = working.files.reduce((sum, file) => sum + (file.deletions ?? 0), 0)
+  const marker = (
+    <svg width={32} height={ROW_HEIGHT} className="shrink-0" aria-hidden>
+      <circle
+        cx={16}
+        cy={ROW_HEIGHT / 2}
+        r={5}
+        fill="none"
+        stroke="var(--lane-0)"
+        strokeWidth={2}
+        strokeDasharray="2 2"
+      />
+    </svg>
+  )
+
+  if (fileCount === 0) {
+    return (
+      <div
+        className="flex items-center gap-2 border-b border-dashed border-line pr-4 text-faint"
+        style={{ height: ROW_HEIGHT }}
+        title="working tree clean — no uncommitted changes to view"
+      >
+        {marker}
+        <span className="text-[12px]">Working tree clean</span>
+      </div>
+    )
+  }
+
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex items-center gap-2 border-b border-dashed border-line pr-4 hover:bg-rowhover"
+      style={{ height: ROW_HEIGHT }}
+      title={`view ${fileCount} uncommitted change${fileCount === 1 ? '' : 's'} in a new tab`}
+    >
+      {marker}
+      <span className="min-w-0 flex-1 truncate text-[12px] text-accent">
+        Uncommitted changes
+        <span className="ml-2 text-faint">
+          {fileCount} file{fileCount === 1 ? '' : 's'}
+          {working.filesTruncated && '+'}
+        </span>
+      </span>
+      <FileLineStats additions={additions} deletions={deletions} />
+    </a>
+  )
+}
 
 export function App() {
   const { themeMode, setThemeMode, resolvedTheme } = useTheme()
@@ -35,6 +99,10 @@ export function App() {
   // against main" affordance diffs against, and knowing it lets the panel hide
   // the affordance on the default branch itself.
   const [branchList, setBranchList] = useState<BranchList | null>(null)
+  // The selected repository's uncommitted changes — drives the "Uncommitted
+  // changes" node at the top of the graph. A failure here is not fatal to the
+  // graph, so it only leaves the node absent rather than raising an error.
+  const [workingTree, setWorkingTree] = useState<WorkingTree | null>(null)
   const [isLoadingLog, setIsLoadingLog] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -100,6 +168,14 @@ export function App() {
     fetchBranches(selectedRepository)
       .then((list) => {
         if (!cancelled) setBranchList(list)
+      })
+      .catch(() => {})
+    // The working tree drives the "Uncommitted changes" node; like the branch
+    // listing a failure there is not fatal to the graph, so it is swallowed.
+    setWorkingTree(null)
+    fetchWorkingTree(selectedRepository)
+      .then((tree) => {
+        if (!cancelled) setWorkingTree(tree)
       })
       .catch(() => {})
     // Deep-linkable selection with natural back-button-free history.
@@ -350,6 +426,14 @@ export function App() {
 
         <main className="flex min-h-0 flex-1">
           <div className="relative min-w-0 flex-1 overflow-auto">
+          {/* The working tree sits at the top of history, above HEAD — ADR-0031:
+              adjacent to the graph it summarises. Shown once loaded whenever a
+              repository is selected, even before the log arrives or when the
+              repo has no commits yet (a fresh repo's untracked files still
+              count as uncommitted changes worth seeing). */}
+          {loadError === null && selectedRepository !== null && workingTree !== null && (
+            <UncommittedChangesRow working={workingTree} href={workingHref(selectedRepository)} />
+          )}
           {loadError !== null && (
             <p className="px-4 py-6 text-[#ff7b72]">
               {loadError}
