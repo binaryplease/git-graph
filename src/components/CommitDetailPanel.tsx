@@ -392,9 +392,11 @@ export function CommitDetailPanel({
         </header>
       )}
 
-      {/* Inline reserves top space so the first content line clears the floating
-          controls; the sidebar's controls live in the header above, so it does not. */}
-      <div className={`min-h-0 flex-1 overflow-auto px-3 pb-2.5 ${isInline ? 'pt-9' : 'pt-2.5'}`}>
+      {/* Content starts at the very top in both variants — no reserved band. The
+          inline controls float in the top-right corner where the first content
+          line (a short trailer/hash) never reaches; their bg-raised backing masks
+          the rare long line or scrolled row that would pass beneath them. */}
+      <div className="min-h-0 flex-1 overflow-auto px-3 py-2.5">
         {error !== null && <p className="text-[#ff7b72]">{error}</p>}
         {error === null && detail === null && isLoading && (
           <p className="text-faint">
