@@ -2,12 +2,28 @@ import { join, resolve } from 'node:path'
 import { Elysia } from 'elysia'
 import { openapi } from '@elysiajs/openapi'
 import { z } from 'zod/v4'
-import { config, isDev } from './config'
-import { DiscoveryDocSchema, HealthResponseSchema } from './routes/discovery.schema'
+import { additionalAllowedHosts, config, isDev } from './config'
+import { createBindExposurePolicy } from './services/bind-exposure'
+import { listenWithStrategy } from './services/listen'
+import {
+  DiscoveryDocSchema,
+  HealthResponseSchema,
+  StatusResponseSchema,
+} from './routes/discovery.schema'
 import { gitRoutes } from './routes/git'
 
 const SERVICE_NAME = 'binp-git-graph'
 const SERVICE_VERSION = '0.1.0'
+
+// Captured once at module load, so `/api/status` can report how long this
+// process has been serving. Reported as an ISO string and a derived uptime.
+const processStartedAt = new Date()
+
+// The port this process actually bound. In `auto` strategy the server may walk
+// past a busy PORT, so the requested config.PORT is not necessarily the real
+// one — status and the startup banner must report what was bound (ADR-0037).
+// Set the moment `listenWithStrategy` returns, below.
+let boundPort = config.PORT
 
 // Per ADR-0020, discovery URLs must be absolute. Honour the forwarded-* headers
 // Caddy/Vite set so the URLs match the public origin; otherwise fall back to the
@@ -80,6 +96,36 @@ const app = new Elysia()
       description: 'Returns `{ ok: true }` when the server is up. No auth required.',
     },
   })
+  // ADR-0015: operational snapshot the CLI's `status` view renders. Distinct
+  // from /api/health (liveness only) — this reports the served root, uptime,
+  // the actually-bound port (ADR-0037), and process identity so a background
+  // daemon is fully inspectable.
+  .get(
+    '/api/status',
+    () => {
+      const now = new Date()
+      return {
+        name: SERVICE_NAME,
+        version: SERVICE_VERSION,
+        pid: process.pid,
+        uptimeSeconds: Math.max(0, Math.round((now.getTime() - processStartedAt.getTime()) / 1000)),
+        startedAt: processStartedAt.toISOString(),
+        host: config.HOST,
+        port: boundPort,
+        root: config.GIT_GRAPH_ROOT,
+      }
+    },
+    {
+      response: { 200: StatusResponseSchema },
+      detail: {
+        tags: ['system'],
+        summary: 'Operational status',
+        description:
+          'Served root, uptime, bound port, and process identity of the running server. ' +
+          'Rendered by `binp-git-graph status`. No auth required.',
+      },
+    },
+  )
   .use(gitRoutes)
 
 // In production the built client is served from dist/client (this file runs as
@@ -101,12 +147,38 @@ if (!isDev) {
   })
 }
 
-// ADR-0018: a port conflict is a fatal startup error. Elysia's listen surfaces
-// EADDRINUSE by default — do not swallow it.
-app.listen({
-  port: config.PORT,
-  hostname: config.HOST,
-  development: isDev,
+// ADR-0037 §4: binding a non-loopback address publishes an unauthenticated git
+// API, so it is a fatal startup error unless the operator named the served hosts
+// in GIT_GRAPH_ALLOWED_HOSTS. Decided once, here, before we ever bind — never
+// per request.
+createBindExposurePolicy().enforce({
+  bindHost: config.HOST,
+  additionalAllowedHosts,
 })
 
-console.log(`${SERVICE_NAME} serving ${config.GIT_GRAPH_ROOT} on http://${config.HOST}:${config.PORT}`)
+// Bind the listen port (ADR-0037 §3). `auto` (the default, every launch shape)
+// walks upward from PORT to a free port, announcing each skip, so a stale dev
+// session or a fleet of instances never collides; `strict` (an explicit
+// operator pin) binds PORT exactly and dies loudly on a conflict (ADR-0018). The
+// bind stays exclusive either way (no SO_REUSEPORT). See services/listen.ts.
+boundPort = listenWithStrategy(app, {
+  host: config.HOST,
+  requestedPort: config.PORT,
+  strategy: config.GIT_GRAPH_PORT_STRATEGY,
+  isDev,
+  announce: (skippedPort) =>
+    console.log(`port ${skippedPort} is in use — trying ${skippedPort + 1}`),
+})
+
+// Hand the actually-bound port back to whoever launched us (the CLI) the moment
+// we are listening, so an auto-assigned port needs no stdout parsing.
+if (config.GIT_GRAPH_READY_FILE) {
+  await Bun.write(config.GIT_GRAPH_READY_FILE, String(boundPort))
+}
+
+const localBase = `http://${config.HOST}:${boundPort}`
+console.log(`${SERVICE_NAME} serving ${config.GIT_GRAPH_ROOT} on ${localBase}`)
+console.log('Discovery')
+console.log(`  docs:      ${localBase}/api/docs`)
+console.log(`  openapi:   ${localBase}/api/openapi.json`)
+console.log(`  discovery: ${localBase}/api`)

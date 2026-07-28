@@ -3,6 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "//bin": "The single on-demand executable (ADR-0011). `bgg` serves a directory's git repositories in the browser; the Nix package (flake.nix) installs it plus a spelled-out `binp-git-graph` alias.",
+  "bin": {
+    "bgg": "./dist/server/cli.js"
+  },
   "//exports": "Render layer as embeddable subpaths (ADR-0027: the invariant — renderer + schema + layout — is the unit of sharing). A host (nightshift-ui) maps these over a Vite source-alias, the pattern binp-file-explorer's ./mount uses. Stays private: true — source-aliased, never published.",
   "exports": {
     "./components": "./src/components/index.ts",
@@ -11,10 +15,12 @@
     "./theme.css": "./src/theme.css"
   },
   "scripts": {
-    "dev": "bunx concurrently -k -n server,client \"bun --watch server/index.ts\" \"bunx vite\"",
+    "dev": "bun scripts/dev.ts",
+    "dev:ports": "bun scripts/dev-ports.ts",
     "dev:server": "bun --watch server/index.ts",
     "dev:client": "bunx vite",
-    "build": "bunx vite build && NODE_ENV=production bun build server/index.ts --outdir dist/server --target bun --sourcemap=linked --production",
+    "cli": "bun server/cli.ts",
+    "build": "bunx vite build && NODE_ENV=production bun build server/index.ts server/cli.ts --outdir dist/server --target bun --sourcemap=linked --production",
     "start": "NODE_ENV=production bun dist/server/index.js",
     "typecheck": "bunx tsc --noEmit",
     "test": "bun test"

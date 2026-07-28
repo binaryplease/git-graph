@@ -12,8 +12,12 @@ NODE_ENV = "development"
 # GIT_GRAPH_ROOT = "/path/to/projects"
 
 [tasks.dev]
-description = "Start dev servers (Elysia + Vite) concurrently"
-run = 'bunx concurrently -k -n server,client "bun --watch server/index.ts" "bunx vite"'
+description = "Resolve ports (ADR-0037 §2), then start Elysia + Vite concurrently"
+run = "bun scripts/dev.ts"
+
+[tasks."dev:ports"]
+description = "Probe and report the ports the dev session will bind (ADR-0037 §2)"
+run = "bun scripts/dev-ports.ts"
 
 [tasks."dev:server"]
 description = "Start Elysia server in watch mode"
@@ -23,11 +27,15 @@ run = "bun --watch server/index.ts"
 description = "Start Vite dev server"
 run = "bunx vite"
 
+[tasks.cli]
+description = "Run the bgg CLI from source (serve / daemon / status)"
+run = "bun server/cli.ts"
+
 [tasks.build]
-description = "Build client (Vite) and server (Bun)"
+description = "Build client (Vite) and server + CLI (Bun)"
 run = """
 bunx vite build
-NODE_ENV=production bun build server/index.ts --outdir dist/server --target bun --sourcemap=linked --production
+NODE_ENV=production bun build server/index.ts server/cli.ts --outdir dist/server --target bun --sourcemap=linked --production
 """
 
 [tasks.start]

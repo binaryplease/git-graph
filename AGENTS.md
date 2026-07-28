@@ -24,11 +24,17 @@ update `backlog.md` — so the next agent inherits the context.
 | Styling | Tailwind CSS v4 | `@tailwindcss/vite` plugin; palette + lane tokens in `src/theme.css` (imported by `index.css`, shared verbatim with a host via `binp-git-graph/theme.css`, ADR-0027). Light/dark/system theme re-skins by overriding the same custom properties under `[data-theme="light"]`. |
 | Icons | `@tabler/icons-react` | ADR-0022 — never Unicode characters as icons. |
 | Diff view | `@git-diff-view/react` + `@git-diff-view/shiki` | Pinned exactly at `0.1.7` (pre-1.0). Whole-file tokenization for the diff views (inline unified in the panel, full-tab split for the standalone commit/compare tabs) — beats per-line highlighting (diff2html). First substantial third-party runtime UI dependency; ADR still open (see `.nightshift/backlog.md`). |
-| Build | Vite (client) + Bun bundler (server) | client → `dist/client/`, server → `dist/server/`. |
+| Build | Vite (client) + Bun bundler (server + CLI) | client → `dist/client/`, server + `bgg` CLI → `dist/server/`. |
+| Packaging | Nix flake | `flake.nix` → the `bgg` standalone CLI + `binp-git-graph` alias (`packages`/`apps`), a `devShell`, and a hardened `nixosModules.default` (`services.binp-git-graph`). Mirrors binp-file-explorer's `bfe` flake. |
 | Dev env | mise | `.mise.toml` declares tool versions, env vars, and tasks (ADR-0004). |
 
 Dev ports are offset from binp-file-explorer so both run side by side:
-Elysia **:3010**, Vite **:5183**.
+Elysia **:3010**, Vite **:5183**. These are the *canonical request*, not a pin:
+`mise run dev` (→ `scripts/dev.ts`) resolves them before launch per **ADR-0037
+§2** — probing each on the bind host, announcing any reassignment, and pinning
+the result (`PORT`, `VITE_PORT`, `VITE_API_TARGET`, strategy `strict`) into both
+child processes so a stale session never forces manual port juggling and Vite's
+`/api` proxy follows a moved server. The runtime binds stay strict (ADR-0018).
 
 ## Derivation (ADR-0006)
 
@@ -82,6 +88,23 @@ consumers (standalone instance · shared package · nightshift-ui module):
   `/api/git/working` + `/api/git/working/diff` (the working tree — uncommitted
   changes vs HEAD, and one file of it; tracked via `git diff HEAD`, untracked via
   `git ls-files --others` diffed from `/dev/null`, membership-guarded path).
+  - Standalone surface (the on-demand instance consumer, mirroring
+    binp-file-explorer's `bfe`): `server/cli.ts` + `server/cli/` is the `bgg`
+    executable the flake installs — `serve` (foreground, browser-open) and a
+    background `daemon` lifecycle (ADR-0015) over `/api/status`, each in its own
+    module (`args` pure-parses argv, `paths` resolves the sibling server bundle
+    per ADR-0011, `browser`, `daemon`). Port selection and exposure are their own
+    dependency-light services (ADR-0032): `services/port.ts` (probe), `listen.ts`
+    (`strict|auto` in-process walk), and `bind-exposure.ts` (the loopback-default
+    gate). All three are **ADR-0037**: `auto` is the *default* strategy for every
+    launch shape — a bare `bun server/index.ts`, `mise run start`, and the CLI —
+    allocating in front of the strict bind, never as a silent runtime fallback;
+    `strict` is reserved for an explicit operator pin (`bgg --port`,
+    `GIT_GRAPH_PORT_STRATEGY=strict`, the NixOS `port` option). The server reports
+    the *bound* port (banner, `/api/status`, the CLI ready-file handshake), and a
+    non-loopback bind refuses to start without `GIT_GRAPH_ALLOWED_HOSTS`
+    (ADR-0037 §4). `scripts/dev-ports.ts` composes the same `port.ts` for the dev
+    resolver.
 - `src/` — React client, one bundle with several entry points that `index.tsx`
   routes on `location.pathname`: the graph shell (`App.tsx`) and the standalone
   diff tabs `FileDiffPage` (`/diff`, one file), `CommitDiffPage` (`/commit`, a
@@ -110,8 +133,11 @@ source-alias them (no proxy, no forked copy).
 
 ## Dev commands
 
-Via mise (`.mise.toml`): `dev`, `dev:server`, `dev:client`, `build`, `start`,
-`typecheck`, `test`.
+Via mise (`.mise.toml`): `dev` (port-resolving launcher, ADR-0037 §2),
+`dev:ports` (probe/report only), `dev:server`, `dev:client`, `cli` (run `bgg`
+from source), `build` (client + server + CLI), `start`, `typecheck`, `test`.
+The standalone build/run also goes through the flake: `nix build` /
+`nix run .# -- …`.
 
 ## Testing expectations
 
@@ -130,8 +156,13 @@ and the untracked-binary notice). The `git show`/`git diff` parsers
 ref — are covered too, and client components have DOM tests (`bunfig.toml`
 preloads happy-dom via `src/test/setup.ts`), including `MultiFileDiffView`'s
 lazy load behind a stubbed IntersectionObserver, `CommitGraph`'s inline
-`selectedDetail` slot, and `detailLayout`'s schema default/fallback (ADR-0029).
-Currently 119 tests across 10 files.
+`selectedDetail` slot, and `detailLayout`'s schema default/fallback (ADR-0029). The standalone surface is
+covered too: `services/port.test.ts` (probe/walk against real binds),
+`listen.test.ts` (`strict|auto` strategy, announced skips, span exhaustion),
+`bind-exposure.test.ts` (loopback-default / non-loopback-refusal, ADR-0037 §4),
+`cli/args.test.ts` (argv routing + flag parsing), and `scripts/dev-ports.test.ts`
+(env pinning + reassignment announcements).
+Currently 164 tests across 15 files.
 
 ## UX conventions
 
@@ -139,7 +170,12 @@ Currently 119 tests across 10 files.
 - ADR-0025: disabled controls stay visible and explain themselves (`title`/placeholder).
 - ADR-0016: no third-party runtime assets — everything is bundled.
 - ADR-0022: Tabler vectors, never emoji.
-- ADR-0018: port conflicts fail loudly at startup.
+- ADR-0018 / ADR-0037: dynamic port allocation runs in front of the strict bind
+  (`auto` default, announced walk), never as a silent fallback; a conflict on a
+  pinned port is still fatal. Loopback bind by default; non-loopback refuses
+  without `GIT_GRAPH_ALLOWED_HOSTS`.
+- ADR-0011 / ADR-0015: the `bgg` CLI resolves its sibling server bundle by real
+  path, and its background daemon lives under the `daemon` subcommand.
 - Theme: light/dark/system toggle in every shell's header (default `system`),
   persisted (ADR-0029) and applied via `[data-theme]`; a pre-paint shim in
   `index.html` avoids a flash.
