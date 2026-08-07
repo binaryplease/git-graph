@@ -114,10 +114,22 @@ consumers (standalone instance · shared package · nightshift-ui module):
   out), `CommitDetailPanel.tsx` (changed files, copy-hash, parent navigation),
   `FileDiff.tsx` (one diff, unified or split by prop), `MultiFileDiffView.tsx`
   (file list on top + per-file diffs loaded lazily as each nears the viewport),
-  plus shared tokens in `components/fileStatus.tsx` and chrome in
-  `DiffTabFrame.tsx`. The shells (`App.tsx` and the four pages) own all
-  fetching; `lib/diffRoutes.ts` is the single descriptor for the diff-tab URLs
-  (ADR-0026) that the panel builds and the pages parse.
+  `UncommittedChangesRow.tsx` (the working-tree node above HEAD), plus shared
+  tokens in `components/fileStatus.tsx` and chrome in `DiffTabFrame.tsx`. The
+  shells (`App.tsx` and the four pages) own all fetching; `lib/diffRoutes.ts` is
+  the single descriptor for the diff-tab URLs (ADR-0026) that the panel builds
+  and the pages parse.
+  - The working-tree row is **barrel-level, not app-level** (ADR-0026 /
+    ADR-0027): it is read on two surfaces — this shell and nightshift-ui's
+    `<GitGraphPanel>` — so it lives in `components/` with the same
+    href-or-handler open seam `CommitDetailPanel` offers (`href` for a host with
+    a diff tab, `onOpen` for one that opens in-app; a handler-driven row renders
+    a `<button>`, never a link with a dead href). It shipped app-local and so
+    was silently absent from the host, which is the failure the barrel prevents.
+    Its geometry helpers (`ROW_HEIGHT`, `GRAPH_NODE_COLUMN_X`,
+    `graphContentLeft`) are exported from the barrel for the same reason — a
+    host aligning a non-commit row must not guess an inset that drifts as lanes
+    are added.
   - App-only chrome (localStorage-backed, deliberately kept out of the host
     barrel per ADR-0032): `lib/theme.ts` (`useTheme` + Zod-validated persisted
     mode, default `system`) with `ThemeToggle.tsx`, and `lib/detailLayout.ts`
@@ -156,13 +168,14 @@ and the untracked-binary notice). The `git show`/`git diff` parsers
 ref — are covered too, and client components have DOM tests (`bunfig.toml`
 preloads happy-dom via `src/test/setup.ts`), including `MultiFileDiffView`'s
 lazy load behind a stubbed IntersectionObserver, `CommitGraph`'s inline
-`selectedDetail` slot, and `detailLayout`'s schema default/fallback (ADR-0029). The standalone surface is
+`selectedDetail` slot, `UncommittedChangesRow`'s clean state and its two open
+seams (link vs in-app handler), and `detailLayout`'s schema default/fallback (ADR-0029). The standalone surface is
 covered too: `services/port.test.ts` (probe/walk against real binds),
 `listen.test.ts` (`strict|auto` strategy, announced skips, span exhaustion),
 `bind-exposure.test.ts` (loopback-default / non-loopback-refusal, ADR-0037 §4),
 `cli/args.test.ts` (argv routing + flag parsing), and `scripts/dev-ports.test.ts`
 (env pinning + reassignment announcements).
-Currently 164 tests across 15 files.
+Currently 170 tests across 16 files.
 
 ## UX conventions
 

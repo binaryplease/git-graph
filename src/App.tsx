@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { IconCircleCheck, IconGitMerge, IconPencil, IconSearch } from '@tabler/icons-react'
+import { IconGitMerge, IconSearch } from '@tabler/icons-react'
 import type {
   BranchList,
   CommitDetail,
@@ -21,85 +21,15 @@ import { commitDiffHref, compareHref, fileDiffHref, workingHref } from './lib/di
 import { loadHighlighter } from './lib/highlighter'
 import { useTheme } from './lib/theme'
 import { useDetailLayout } from './lib/detailLayout'
-import { CommitGraph, CommitDetailPanel, type CommitGraphStats } from './components'
-import { GRAPH_NODE_COLUMN_X, ROW_HEIGHT, graphContentLeft } from './components/CommitGraph'
-import { FileLineStats } from './components/fileStatus'
+import {
+  CommitGraph,
+  CommitDetailPanel,
+  UncommittedChangesRow,
+  graphContentLeft,
+  type CommitGraphStats,
+} from './components'
 import { ThemeToggle } from './components/ThemeToggle'
 import { DetailLayoutToggle } from './components/DetailLayoutToggle'
-
-// The graph's "Uncommitted changes" node — a synthetic row above HEAD, the way
-// mhutchie's Git Graph and GitKraken mark the working tree at the top of
-// history. It is rendered outside CommitGraph so the pinned layout algorithm
-// never sees a non-commit. The leading glyph states which it is at a glance: a
-// pencil (matching the /working tab's own header) when there are edits to view,
-// a check when the tree is clean — never an ambiguous dashed ring that reads as
-// a spinner or as pending changes. ADR-0022: real icons, not hand-drawn markers.
-// The text is inset by `graphContentLeft(laneCount)` — the exact padding the
-// commit rows use — so it lines up with the commit subjects below, and the icon
-// sits in the graph gutter aligned to the node column. ADR-0031: adjacent to the
-// history it summarises. ADR-0025: when the tree is clean the control stays
-// visible and explains that there is nothing to open, rather than vanishing.
-const MARKER_SIZE = 16
-const markerStyle = { left: GRAPH_NODE_COLUMN_X - MARKER_SIZE / 2 }
-
-function UncommittedChangesRow({
-  working,
-  href,
-  contentLeft,
-}: {
-  working: WorkingTree
-  href: string
-  /** Left inset for the text, matching the commit rows' `graphContentLeft`. */
-  contentLeft: number
-}) {
-  const fileCount = working.files.length
-  const additions = working.files.reduce((sum, file) => sum + (file.additions ?? 0), 0)
-  const deletions = working.files.reduce((sum, file) => sum + (file.deletions ?? 0), 0)
-
-  if (fileCount === 0) {
-    return (
-      <div
-        className="relative flex items-center gap-2 border-b border-line pr-4 text-faint"
-        style={{ height: ROW_HEIGHT, paddingLeft: contentLeft }}
-        title="working tree clean — no uncommitted changes to view"
-      >
-        <IconCircleCheck
-          size={MARKER_SIZE}
-          className="absolute top-1/2 -translate-y-1/2"
-          style={markerStyle}
-          aria-hidden
-        />
-        <span className="text-[12px]">Working tree clean</span>
-      </div>
-    )
-  }
-
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="relative flex items-center gap-2 border-b border-line pr-4 hover:bg-rowhover"
-      style={{ height: ROW_HEIGHT, paddingLeft: contentLeft }}
-      title={`view ${fileCount} uncommitted change${fileCount === 1 ? '' : 's'} in a new tab`}
-    >
-      <IconPencil
-        size={MARKER_SIZE}
-        className="absolute top-1/2 -translate-y-1/2 text-accent"
-        style={markerStyle}
-        aria-hidden
-      />
-      <span className="min-w-0 flex-1 truncate text-[12px] text-accent">
-        Uncommitted changes
-        <span className="ml-2 text-faint">
-          {fileCount} file{fileCount === 1 ? '' : 's'}
-          {working.filesTruncated && '+'}
-        </span>
-      </span>
-      <FileLineStats additions={additions} deletions={deletions} />
-    </a>
-  )
-}
 
 export function App() {
   const { themeMode, setThemeMode, resolvedTheme } = useTheme()

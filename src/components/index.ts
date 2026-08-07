@@ -18,6 +18,17 @@ export type { MultiFileDiffViewProps } from './MultiFileDiffView'
 export { CommitDetailPanel } from './CommitDetailPanel'
 export type { CommitDetailPanelProps } from './CommitDetailPanel'
 
+// The working-tree node that sits above HEAD in the graph. Rendered *outside*
+// CommitGraph (the pinned layout algorithm never sees a non-commit), so a host
+// composes it directly above the graph and aligns it with `graphContentLeft`.
+export { UncommittedChangesRow } from './UncommittedChangesRow'
+export type { UncommittedChangesRowProps } from './UncommittedChangesRow'
+
+// The graph geometry a host needs to align that row — and any other non-commit
+// row — with the commit subjects and the node column, rather than guessing a
+// fixed inset that drifts as lanes are added.
+export { GRAPH_NODE_COLUMN_X, ROW_HEIGHT, graphColumnWidth, graphContentLeft } from './CommitGraph'
+
 // The host file-open seam (ADR-0026: one descriptor) shared by MultiFileDiffView
 // and CommitDetailPanel — a host wires `onOpenFile` on either to open a changed
 // file in its own surface without scraping the diff view's internal DOM.
