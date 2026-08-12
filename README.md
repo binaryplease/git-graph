@@ -1,5 +1,11 @@
 # binp-git-graph
 
+![binp-git-graph serving its own repository](docs/screenshot.png)
+
+*The app served on this repository (`bgg` in the project root): the commit graph
+with `HEAD` / branch / remote ref pills, the working-tree row above `HEAD`, and a
+selected commit's detail panel — here docked as a sidebar, in the dark theme.*
+
 A **local git commit-graph viewer** — a web app that renders the commit DAG of
 your repositories the way the proven desktop tools do (mhutchie/vscode-git-graph,
 GitLens, GitKraken), as a standalone local-machine service.
@@ -89,9 +95,11 @@ graph with per-lane colours, hollow merge nodes, curved elbow edges, ref pills
 matched-character highlighting, and a commits/lanes/matches readout. Selecting a
 commit opens a detail panel — full message, changed files, copy-hash, clickable
 parents — inline beneath the row by default (toggle to a docked sidebar), and
-each changed file expands to an inline, whole-file-tokenized diff. A changed
-file, a whole commit, and a branch (compared three-dot against the default) each
-also open in a standalone diff tab. Light / dark / system theme toggle,
+each changed file expands to an inline, whole-file-tokenized diff. Uncommitted
+changes appear as a working-tree row above `HEAD` (tracked *and* untracked
+files), opening the same diff view. A changed file, a whole commit, a branch
+(compared three-dot against the default) and the working tree each also open in
+a standalone diff tab. Light / dark / system theme toggle,
 persisted. The render layer is importable by subpath (`binp-git-graph/components`,
 `/shared`, `/theme.css`) for reuse in a host.
 Planned: git actions from the UI (merge branch, checkout, …) and embedding the
