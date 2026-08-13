@@ -1,10 +1,16 @@
 # binp-git-graph
 
-![binp-git-graph serving its own repository](docs/screenshot.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/screenshot-light.png">
+  <img alt="binp-git-graph serving its own repository" src="docs/screenshot-dark.png">
+</picture>
 
 *The app served on this repository (`bgg` in the project root): the commit graph
 with `HEAD` / branch / remote ref pills, the working-tree row above `HEAD`, and a
-selected commit's detail panel — here docked as a sidebar, in the dark theme.*
+selected commit's detail panel — here docked as a sidebar. The shot follows your
+GitHub theme; both are the same view, [light](docs/screenshot-light.png) and
+[dark](docs/screenshot-dark.png).*
 
 A **local git commit-graph viewer** — a web app that renders the commit DAG of
 your repositories the way the proven desktop tools do (mhutchie/vscode-git-graph,
