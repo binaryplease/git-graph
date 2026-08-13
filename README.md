@@ -3,7 +3,7 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshot-light.png">
-  <img alt="binp-git-graph serving its own repository" src="docs/screenshot-dark.png">
+  <img alt="binp-git-graph serving its own repository" src="docs/screenshot-dark.png" width="1600">
 </picture>
 
 *The app served on this repository (`bgg` in the project root): the commit graph
