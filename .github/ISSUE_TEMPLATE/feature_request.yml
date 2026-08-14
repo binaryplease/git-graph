@@ -1,0 +1,44 @@
+name: Feature request
+description: Suggest a capability the viewer should have
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: >
+        What are you trying to do that the viewer makes hard or impossible?
+        Describe the situation, not the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: requirement
+    attributes:
+      label: What it should do
+      description: The behaviour you want, stated so it can be checked.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: A checklist of what must be true for this to be done.
+      placeholder: |
+        - [ ] …
+        - [ ] …
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Where does this live?
+      description: >
+        The render layer is reusable by other hosts, so it matters whether a
+        feature belongs to the app shell or to the shared components.
+      options:
+        - Not sure
+        - App shell only (this repo's UI)
+        - Shared render component (reusable by an embedding host)
+        - Server / git layer
+        - CLI or packaging

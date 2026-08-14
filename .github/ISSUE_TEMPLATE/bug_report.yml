@@ -1,0 +1,63 @@
+name: Bug report
+description: Something in the viewer behaves incorrectly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please **do not** report security problems here — follow
+        [SECURITY.md](https://github.com/binaryplease/binp-git-graph/blob/main/SECURITY.md)
+        instead.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you see, and what did you expect instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run `bgg ~/src`
+        2. Select repository X
+        3. Click …
+    validations:
+      required: true
+
+  - type: textarea
+    id: repo-shape
+    attributes:
+      label: Repository shape
+      description: >
+        Most graph bugs depend on the history. Roughly how many commits, how
+        many branches, any octopus merges, disconnected histories, or a repo
+        with no commits at all? `git log --oneline --graph | head -40` around
+        the affected commit is ideal.
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `bgg version`, or the commit you built from.
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: OS, Bun version, and browser
+      placeholder: "NixOS 25.11 · Bun 1.3.13 · Firefox 145"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server output and browser console
+      description: Anything the server printed and any errors in the devtools console.
+      render: shell

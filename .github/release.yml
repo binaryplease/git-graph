@@ -1,0 +1,19 @@
+# Curates `gh release create --generate-notes`. Auto-generated notes are
+# composed from merged PR titles and contributor names, so this file is the
+# filter that decides what becomes public in a release.
+changelog:
+  exclude:
+    labels:
+      - internal
+      - no-changelog
+  categories:
+    - title: Features
+      labels: ["enhancement", "feature"]
+    - title: Fixes
+      labels: ["bug"]
+    - title: Security
+      labels: ["security"]
+    - title: Documentation
+      labels: ["documentation"]
+    - title: Other changes
+      labels: ["*"]

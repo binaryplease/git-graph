@@ -38,13 +38,15 @@ child processes so a stale session never forces manual port juggling and Vite's
 
 ## Derivation (ADR-0006)
 
-Scaffolded per ADR-0003 with infra/dev-env conventions adopted from
-**binp-file-explorer** (build scripts, ADR-0020 discovery skeleton, config
-shape). The *product* is a port: the layout algorithm, renderer behaviour, and
-search UX come verbatim from the prototype
-`mission-control-center/git-graph/index.html` (commit 9f74265), which was
-verified in-browser against real multi-branch history. Reference:
-`mission-control-center/research/2026-06-18-git-graph-web-views.md`.
+Scaffolded per ADR-0003 with infra/dev-env conventions adopted from a sibling
+project (build scripts, ADR-0020 discovery skeleton, config shape). The
+*product* is a port: the layout algorithm, renderer behaviour, and search UX
+come verbatim from an internal single-file prototype (`@ 9f74265`) that was
+verified in-browser against real multi-branch history. The algorithm itself is
+pvigier's active-lane sweep, described publicly at
+<https://pvigier.github.io/2019/05/06/commit-graph-drawing-algorithms.html>;
+that post, plus `shared/graphLayout.test.ts`'s pinned fixture, is the
+reproducible reference — the prototype is not needed to work on this repo.
 
 ## Architecture — the three-consumer shape
 
