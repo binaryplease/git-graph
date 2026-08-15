@@ -132,6 +132,8 @@
 
             meta = {
               description = "Local git commit-graph viewer — browse your repositories' history in the browser";
+              homepage = "https://github.com/binaryplease/binp-git-graph";
+              license = pkgs.lib.licenses.mit;
               mainProgram = "bgg";
               platforms = pkgs.lib.platforms.unix;
             };
