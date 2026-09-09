@@ -24,22 +24,22 @@ browser: lanes, merges, ref pills, diffs, and uncommitted changes.
 With [Nix](https://nixos.org/download) — nothing to install:
 
 ```sh
-nix run github:binaryplease/binp-git-graph            # serve the repos under the cwd
-nix run github:binaryplease/binp-git-graph -- ~/src   # serve a specific projects folder
+nix run github:binaryplease/git-graph            # serve the repos under the cwd
+nix run github:binaryplease/git-graph -- ~/src   # serve a specific projects folder
 ```
 
 From source, with [Bun](https://bun.sh):
 
 ```sh
-git clone https://github.com/binaryplease/binp-git-graph
-cd binp-git-graph
+git clone https://github.com/binaryplease/git-graph
+cd git-graph
 bun install
 bun run build
 bun run cli -- ~/src
 ```
 
 Either way a browser opens on the graph. `nix profile install
-github:binaryplease/binp-git-graph` puts `bgg` (and a spelled-out
+github:binaryplease/git-graph` puts `bgg` (and a spelled-out
 `binp-git-graph` alias) on your `PATH` for good.
 
 ## Using it

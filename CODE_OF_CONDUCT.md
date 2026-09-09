@@ -61,7 +61,7 @@ representative at an online or offline event.
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
 reported to the community leaders responsible for enforcement by opening a
 report through the repository's
-[Security tab](https://github.com/binaryplease/binp-git-graph/security) or by
+[Security tab](https://github.com/binaryplease/git-graph/security) or by
 contacting the maintainers privately.
 
 All complaints will be reviewed and investigated promptly and fairly. All

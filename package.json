@@ -5,12 +5,12 @@
   "type": "module",
   "license": "MIT",
   "description": "Local git commit-graph viewer — browse your repositories' history in the browser",
-  "homepage": "https://github.com/binaryplease/binp-git-graph",
+  "homepage": "https://github.com/binaryplease/git-graph",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/binaryplease/binp-git-graph.git"
+    "url": "git+https://github.com/binaryplease/git-graph.git"
   },
-  "bugs": "https://github.com/binaryplease/binp-git-graph/issues",
+  "bugs": "https://github.com/binaryplease/git-graph/issues",
   "//bin": "The single on-demand executable (ADR-0011). `bgg` serves a directory's git repositories in the browser; the Nix package (flake.nix) installs it plus a spelled-out `binp-git-graph` alias.",
   "bin": {
     "bgg": "./dist/server/cli.js"

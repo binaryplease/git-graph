@@ -6,7 +6,7 @@
 
 Report it privately through GitHub's private vulnerability reporting:
 
-1. Go to the [Security tab](https://github.com/binaryplease/binp-git-graph/security)
+1. Go to the [Security tab](https://github.com/binaryplease/git-graph/security)
 2. Click **Report a vulnerability**
 
 You will get an acknowledgement within 7 days. If a fix is warranted, we will

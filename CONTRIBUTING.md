@@ -21,8 +21,8 @@ You need [Bun](https://bun.sh). [mise](https://mise.jdx.dev) is optional but
 pins the toolchain version for you.
 
 ```sh
-git clone https://github.com/binaryplease/binp-git-graph
-cd binp-git-graph
+git clone https://github.com/binaryplease/git-graph
+cd git-graph
 mise install      # optional — installs the pinned Bun
 bun install
 mise run dev      # or: bun run dev
