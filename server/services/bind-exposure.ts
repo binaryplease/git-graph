@@ -1,6 +1,6 @@
 // Startup exposure policy for the bind address (ADR-0037 §4).
 //
-// binp-git-graph is an UNAUTHENTICATED API: it lists the git repositories at a
+// git-graph is an UNAUTHENTICATED API: it lists the git repositories at a
 // served root and returns their commit history, file diffs, and working-tree
 // changes to anyone who can reach the port. Nothing in the request path
 // authenticates the caller, so the loopback bind is the only access control in
@@ -47,7 +47,7 @@ export type BindExposureDecision =
 const NON_LOOPBACK_REFUSAL = (bindHost: string) =>
   `refusing to start: HOST=${bindHost} is not a loopback address, and ` +
   'GIT_GRAPH_ALLOWED_HOSTS is empty.\n\n' +
-  'binp-git-graph is an UNAUTHENTICATED git API. Binding a non-loopback ' +
+  'git-graph is an UNAUTHENTICATED git API. Binding a non-loopback ' +
   'address publishes every repository under the served root — commit history, ' +
   'diffs, and working-tree changes — to every peer that can reach this port.\n\n' +
   'To run this way deliberately:\n' +
@@ -59,7 +59,7 @@ const NON_LOOPBACK_REFUSAL = (bindHost: string) =>
 
 const EXPOSED_WARNING = (bindHost: string) =>
   `WARNING: bound to a non-loopback address (HOST=${bindHost}).\n` +
-  '  binp-git-graph authenticates nothing itself — the reverse proxy in front ' +
+  '  git-graph authenticates nothing itself — the reverse proxy in front ' +
   'is the only thing between the network and every served repository. Make sure ' +
   'it authenticates every request and that this port is not reachable directly.'
 

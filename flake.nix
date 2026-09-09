@@ -1,5 +1,5 @@
 {
-  description = "binp-git-graph — a local git commit-graph viewer, as a single on-demand CLI (bgg)";
+  description = "git-graph — a local git commit-graph viewer, as a single on-demand CLI (bgg)";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -18,7 +18,7 @@
         let
           pkgs = nixpkgs.legacyPackages.${system};
 
-          pname = "binp-git-graph";
+          pname = "git-graph";
           version = "0.1.0";
 
           # Vendored dependencies as a fixed-output derivation: `bun install`
@@ -61,7 +61,7 @@
             outputHash = "sha256-BIWdlrN5TYUsLIneDSOtI6ScKl6FG8a1UdnxvM+7tfI=";
           };
 
-          binp-git-graph = pkgs.stdenv.mkDerivation {
+          git-graph = pkgs.stdenv.mkDerivation {
             inherit pname version;
             src = pkgs.lib.fileset.toSource {
               root = ./.;
@@ -122,7 +122,7 @@
               # terminal serves the git repositories under the current directory;
               # the wrapper resolves the built CLI bundle beside the server bundle
               # so the ADR-0011 sibling lookup and the '../client' static-asset
-              # path both hold. `binp-git-graph` is provided as a spelled-out
+              # path both hold. `git-graph` is provided as a spelled-out
               # alias (ADR-0008: package name = repo name).
               makeWrapper ${pkgs.bun}/bin/bun "$out/bin/bgg" \
                 --add-flags "$out/lib/${pname}/server/cli.js"
@@ -140,15 +140,15 @@
           };
         in
         {
-          packages.default = binp-git-graph;
-          packages.binp-git-graph = binp-git-graph;
+          packages.default = git-graph;
+          packages.git-graph = git-graph;
 
           # `nix run` → serve the current directory's repositories on a free port
           # and open the browser. `nix run .# -- daemon start` etc. reach the
           # full CLI.
           apps.default = {
             type = "app";
-            program = "${binp-git-graph}/bin/bgg";
+            program = "${git-graph}/bin/bgg";
             meta = {
               description = "Serve the current directory's git repositories in the browser (bgg)";
               mainProgram = "bgg";
@@ -179,12 +179,12 @@
           ...
         }:
         let
-          cfg = config.services.binp-git-graph;
+          cfg = config.services.git-graph;
           package = self.packages.${pkgs.system}.default;
         in
         {
-          options.services.binp-git-graph = {
-            enable = lib.mkEnableOption "binp-git-graph commit-graph viewer";
+          options.services.git-graph = {
+            enable = lib.mkEnableOption "git-graph commit-graph viewer";
 
             port = lib.mkOption {
               type = lib.types.port;
@@ -228,14 +228,14 @@
 
             user = lib.mkOption {
               type = lib.types.str;
-              default = "binp-git-graph";
+              default = "git-graph";
               description = "System user the service runs as. Must be able to read `root`.";
             };
           };
 
           config = lib.mkIf cfg.enable {
-            systemd.services.binp-git-graph = {
-              description = "binp-git-graph — local git commit-graph viewer";
+            systemd.services.git-graph = {
+              description = "git-graph — local git commit-graph viewer";
               wantedBy = [ "multi-user.target" ];
               after = [ "network.target" ];
 
@@ -256,8 +256,10 @@
               serviceConfig = {
                 Type = "simple";
                 # The server binary (not the CLI): systemd owns this lifecycle,
-                # so it runs in the foreground and is supervised directly.
-                ExecStart = "${pkgs.bun}/bin/bun ${package}/lib/binp-git-graph/server/index.js";
+                # so it runs in the foreground and is supervised directly. The
+                # install path is `lib/<pname>`, so read the name off the package
+                # rather than spelling it again — the two cannot then drift.
+                ExecStart = "${pkgs.bun}/bin/bun ${package}/lib/${package.pname}/server/index.js";
                 Restart = "on-failure";
                 RestartSec = 5;
 
@@ -322,7 +324,7 @@
             users.users.${cfg.user} = lib.mkDefault {
               isSystemUser = true;
               group = cfg.user;
-              description = "binp-git-graph service user";
+              description = "git-graph service user";
             };
             users.groups.${cfg.user} = lib.mkDefault { };
           };

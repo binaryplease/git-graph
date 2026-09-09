@@ -19,7 +19,7 @@ import { dirname, extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod/v4'
 
-const DAEMON_NAME = 'binp-git-graph'
+const DAEMON_NAME = 'git-graph'
 
 /**
  * Directory of the running CLI file, resolved through any symlink (ADR-0011).

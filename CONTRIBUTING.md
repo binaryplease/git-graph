@@ -1,4 +1,4 @@
-# Contributing to binp-git-graph
+# Contributing to git-graph
 
 Thanks for taking the time. This is a small, focused project — a local git
 commit-graph viewer — and the fastest way to get a change merged is to keep it

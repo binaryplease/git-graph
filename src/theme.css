@@ -8,7 +8,7 @@
    Kept in its own file with NO `@import "tailwindcss"` (ADR-0027) so it can be
    shared two ways over one definition: the standalone app pulls it in after
    Tailwind via `index.css`, and an embedding host (nightshift-ui) imports
-   `binp-git-graph/theme.css` into *its own* Tailwind build — plus an `@source`
+   `git-graph/theme.css` into *its own* Tailwind build — plus an `@source`
    over this `src/` so the host emits the utilities the components use — so the
    mounted graph/diff surface reads with the identical palette without pulling a
    second `@import "tailwindcss"` into the host bundle.

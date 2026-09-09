@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "binp-git-graph",
+      "name": "git-graph",
       "dependencies": {
         "@elysiajs/openapi": "^1.4.15",
         "@git-diff-view/react": "0.1.7",

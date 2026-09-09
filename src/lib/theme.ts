@@ -26,7 +26,7 @@ export type ThemeMode = z.infer<typeof ThemeModeSchema>
 export type ResolvedTheme = 'dark' | 'light'
 
 // Keep this key in sync with the pre-paint shim in index.html.
-const THEME_STORAGE_KEY = 'binp-git-graph:theme'
+const THEME_STORAGE_KEY = 'git-graph:theme'
 const DARK_MEDIA_QUERY = '(prefers-color-scheme: dark)'
 
 function readStoredThemeMode(): ThemeMode {

@@ -319,7 +319,7 @@ export function App() {
           <div className="flex items-center gap-2 font-semibold">
             <IconGitMerge size={20} className="text-accent" aria-hidden />
             <span>
-              Git Graph <small className="font-normal text-faint">binp-git-graph</small>
+              Git Graph <small className="font-normal text-faint">git-graph</small>
             </span>
           </div>
 

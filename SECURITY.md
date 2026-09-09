@@ -19,7 +19,7 @@ This project is pre-1.0. Only the latest release on `main` receives fixes.
 
 ## Threat model — read this before reporting
 
-`binp-git-graph` is a **local-machine service with no authentication**. That is
+`git-graph` is a **local-machine service with no authentication**. That is
 the design, not an oversight, and the following are therefore *not*
 vulnerabilities:
 

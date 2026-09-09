@@ -17,7 +17,7 @@ export const DETAIL_LAYOUTS = ['inline', 'sidebar'] as const
 export const DetailLayoutSchema = z.enum(DETAIL_LAYOUTS).default('inline').catch('inline')
 export type DetailLayout = z.infer<typeof DetailLayoutSchema>
 
-const DETAIL_LAYOUT_STORAGE_KEY = 'binp-git-graph:detail-layout'
+const DETAIL_LAYOUT_STORAGE_KEY = 'git-graph:detail-layout'
 
 function readStoredDetailLayout(): DetailLayout {
   return DetailLayoutSchema.parse(window.localStorage.getItem(DETAIL_LAYOUT_STORAGE_KEY) ?? undefined)

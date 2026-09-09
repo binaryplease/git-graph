@@ -1,6 +1,6 @@
 @import "tailwindcss";
 /* The palette tokens and component base rules — shared verbatim with an
-   embedding host via `binp-git-graph/theme.css` (ADR-0027: one definition, two
+   embedding host via `git-graph/theme.css` (ADR-0027: one definition, two
    consumers). Imported after Tailwind so the `@theme` tokens generate their
    utilities. */
 @import "./theme.css";
