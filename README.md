@@ -1,9 +1,9 @@
-# binp-git-graph
+# git-graph
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshot-light.png">
-  <img alt="binp-git-graph serving its own repository" src="docs/screenshot-dark.png" width="1600">
+  <img alt="git-graph serving its own repository" src="docs/screenshot-dark.png" width="1600">
 </picture>
 
 *The app served on this repository (`bgg` in the project root): the commit graph
@@ -40,7 +40,7 @@ bun run cli -- ~/src
 
 Either way a browser opens on the graph. `nix profile install
 github:binaryplease/git-graph` puts `bgg` (and a spelled-out
-`binp-git-graph` alias) on your `PATH` for good.
+`git-graph` alias) on your `PATH` for good.
 
 ## Using it
 
@@ -108,7 +108,7 @@ vulnerability.
 ## Running it as a service
 
 The flake exposes a hardened **NixOS module** (`nixosModules.default`,
-`services.binp-git-graph`) that runs the server as a loopback-bound systemd
+`services.git-graph`) that runs the server as a loopback-bound systemd
 service. Front it with an authenticating reverse proxy and set `allowedHosts`
 before exposing it — see the security model above.
 
@@ -119,9 +119,9 @@ graph without forking it:
 
 | Subpath | Contents |
 |---|---|
-| `binp-git-graph/components` | The fetch-free React components — graph, detail panel, diffs, working-tree row |
-| `binp-git-graph/shared` | The git schema, the layout algorithm, the fuzzy matcher |
-| `binp-git-graph/theme.css` | The palette and lane colour tokens |
+| `git-graph/components` | The fetch-free React components — graph, detail panel, diffs, working-tree row |
+| `git-graph/shared` | The git schema, the layout algorithm, the fuzzy matcher |
+| `git-graph/theme.css` | The palette and lane colour tokens |
 
 Every component takes its data as props and does no fetching of its own; the
 host owns the requests. The package is not published to npm — consume it by

@@ -30,7 +30,7 @@ function runGit(repositoryPath: string, ...gitArguments: string[]) {
 }
 
 beforeAll(() => {
-  scratchRoot = mkdtempSync(join(tmpdir(), 'binp-git-graph-test-'))
+  scratchRoot = mkdtempSync(join(tmpdir(), 'git-graph-test-'))
 
   const repositoryPath = join(scratchRoot, 'sample-repo')
   runGit(scratchRoot, 'init', '-b', 'main', repositoryPath)

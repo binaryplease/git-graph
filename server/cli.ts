@@ -1,5 +1,5 @@
 /**
- * `binp-git-graph` command-line entry — the single executable the Nix package
+ * `git-graph` command-line entry — the single executable the Nix package
  * installs as `bgg`.
  *
  * Two surfaces, per the on-demand-plus-daemon design:

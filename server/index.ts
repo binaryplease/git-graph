@@ -12,7 +12,7 @@ import {
 } from './routes/discovery.schema'
 import { gitRoutes } from './routes/git'
 
-const SERVICE_NAME = 'binp-git-graph'
+const SERVICE_NAME = 'git-graph'
 const SERVICE_VERSION = '0.1.0'
 
 // Captured once at module load, so `/api/status` can report how long this
@@ -122,7 +122,7 @@ const app = new Elysia()
         summary: 'Operational status',
         description:
           'Served root, uptime, bound port, and process identity of the running server. ' +
-          'Rendered by `binp-git-graph status`. No auth required.',
+          'Rendered by `git-graph status`. No auth required.',
       },
     },
   )

@@ -1,4 +1,4 @@
-// The public shared barrel (`binp-git-graph/shared`): the pure, data-in/data-out
+// The public shared barrel (`git-graph/shared`): the pure, data-in/data-out
 // layer the render components are built on, exposed so a host supplies data in
 // the exact shapes the components expect. Zod is the single source of truth
 // (ADR-0013) — the schemas double as the types via `z.infer`:
