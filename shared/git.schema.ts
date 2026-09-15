@@ -24,11 +24,14 @@ export const GitCommitSchema = z.object({
 })
 export type GitCommit = z.infer<typeof GitCommitSchema>
 
-// The repository's own remote names, read from `git for-each-ref refs/remotes`.
-// It travels with every payload that carries ref decorations because a
-// decoration cannot be classified without it: remote names are arbitrary, so
-// only this list tells `fork/main` (a remote-tracking ref) from `feature/main`
-// (a local branch with a slash in its name).
+// The repository's own remote names: `git remote`, kept only where
+// `refs/remotes` holds refs for the name (a configured-but-never-fetched remote
+// cannot appear in a decoration). It travels with every payload that carries
+// ref decorations because a decoration cannot be classified without it: remote
+// names are arbitrary — and may themselves contain a slash — so only this list
+// tells `fork/main` (a remote-tracking ref) from `feature/main` (a local branch
+// with a slash in its name). A host supplying its own list must take the names
+// from `git remote`, never re-split them out of `refs/remotes/…` paths.
 export const RemoteNamesSchema = z
   .array(z.string())
   .default([])

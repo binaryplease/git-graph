@@ -32,11 +32,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tooltip and to screen readers. The raw `HEAD -> ` plumbing text and the `⇅` glyph are
   gone; `⇅` is git's own mark for divergence, so it asserted the opposite of the agreement
   the pill reports. ([#6])
-- The commit log and commit detail responses now carry the repository's remote names, read
-  from its own `refs/remotes`. ([#6])
+- The commit log and commit detail responses now carry the repository's remote names: the
+  names `git remote` lists, kept only where `refs/remotes` holds refs for them. A
+  remote-tracking ref with no configured remote behind it (a git-svn `refs/remotes/origin/
+  trunk`, or a `git fetch <url> +refs/heads/*:refs/remotes/adhoc/*`) therefore no longer
+  classifies as remote-tracking and renders as a local branch under its qualified name.
+  ([#6])
 
 ### Fixed
 
+- Ref decorations are read in their short form regardless of the user's `log.decorate`
+  setting. `%d`/`%D` honour that config, and `log.decorate=full` in a `~/.gitconfig` made
+  every decoration arrive as `refs/heads/main` / `refs/remotes/origin/main` — which the
+  pills read as two unrelated local branches, never unified, with a compare link the
+  server rejected. `--decorate=short` is now pinned on both the log and the detail read.
+- The branch listing (and with it the compare membership guard and the default-branch
+  resolution) no longer depends on git's ambiguity-sensitive ref shortening. A local branch
+  `origin/main` next to `refs/remotes/origin/main` listed as `heads/origin/main`, so the
+  compare link its pill built was rejected as an unknown branch; and `origin/HEAD` pointing
+  at such a colliding name shortened to `remotes/origin/…`, which the `origin/` strip could
+  not undo, so the default silently fell back to `main`. Both now read the full refname and
+  strip the structural prefix.
+- A configured-but-unfetched remote whose name is a path prefix of a fetched one (`fork`
+  next to `fork/alice`, possible through a hand-edited config) is no longer reported as a
+  remote on the strength of the longer name's refs; a ref counts only for the longest
+  configured name that prefixes it.
+- Opening a file diff no longer spawns the two `git` processes that read the remote names
+  the commit detail carries; the file diff never used them.
 - A ref pill no longer claims a branch is in sync with a remote that does not exist. Remote
   refs are recognised by the repository's actual remote names rather than an assumed
   `origin/` prefix, so a local branch named `origin/main` in a repository with no remotes

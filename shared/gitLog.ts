@@ -15,6 +15,11 @@ export const COMMIT_LOG_ARGUMENTS = [
   '--topo-order',
   `--pretty=format:${COMMIT_LOG_PRETTY_FORMAT}`,
   '--date=short',
+  // `%d` honours `log.decorate`, and a user with `log.decorate=full` in their
+  // config gets `refs/heads/main, refs/remotes/origin/main` — which the ref
+  // grouper (`shared/refGroup.ts`) reads as two unrelated local branches. The
+  // short form is the contract, so it is pinned here rather than assumed.
+  '--decorate=short',
 ] as const
 
 // git separates decorations with a comma *and a space*, and a ref name may not

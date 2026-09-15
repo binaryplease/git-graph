@@ -217,9 +217,9 @@ describe('CommitGraph checked-out row marker', () => {
     // The graph composes the shared cluster rather than placing the ring
     // itself, so the arrangement CommitRefRow owns holds here too: same line as
     // the pills, immediately before the first (ADR-0027).
-    const headRowPill = container.querySelector('.ref-pill')
-    expect(markers[0]!.parentElement).toBe(headRowPill!.parentElement)
-    expect(markers[0]!.nextElementSibling).toBe(headRowPill)
+    const nextToRing = markers[0]!.nextElementSibling
+    expect(nextToRing?.classList.contains('ref-pill')).toBe(true)
+    expect(nextToRing?.textContent).toBe('main origin')
   })
 
   test('a commit with no ref at all is unmarked', () => {

@@ -229,7 +229,11 @@ export function groupRefDecorations(
 
 /** What a ref pill prints for a group: the ref itself, plus the remotes to mark. */
 export type RefGroupLabel = {
-  /** The ref's text, without the HEAD marker — also what a user means by "copy this ref". */
+  /**
+   * The ref's text, without the HEAD marker. Display only: it is unqualified
+   * for a name on several remotes and nowhere locally, so what a copy control
+   * hands over is {@link refGroupCopyValue}, never this.
+   */
   text: string
   /**
    * Remotes to append to the chip as further segments of the same pill, or
@@ -269,10 +273,8 @@ export function refGroupLabel(group: RefGroup): RefGroupLabel {
  * the copy value going wrong again.
  */
 export function refGroupCopyValue(group: RefGroup): string {
-  const [firstRemote] = group.remotes
-  if (group.kind === 'remote' && firstRemote !== undefined) {
-    return `${firstRemote}/${group.name}`
-  }
+  // A `remote` group is only ever built with at least one remote.
+  if (group.kind === 'remote') return `${group.remotes[0]}/${group.name}`
   // A tag, a local branch (with or without remotes) and a detached `HEAD` all
   // resolve under their own name.
   return group.name

@@ -42,8 +42,8 @@ export type RefPillProps = {
  * A checked-out branch says so through pill state — the head colour it already
  * had, plus weight and a ring — instead of printing git's `HEAD -> ` plumbing
  * text, which none of Git Graph, GitLens/GitKraken or VS Code's Source Control
- * Graph puts on screen either. The row-level half of that signal is
- * {@link CheckedOutMarker}.
+ * Graph puts on screen either. The row-level half of that signal is the ring
+ * {@link CommitRefRow} places before the pills.
  *
  * A ref that exists on exactly one remote and nowhere locally is not in
  * agreement with anything — it is simply that remote's branch, so it keeps the

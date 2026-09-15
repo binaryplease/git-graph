@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { CommitDetail, CommitFileChange } from '../../shared/git.schema'
 import { CommitDetailPanel } from './CommitDetailPanel'
@@ -416,12 +416,24 @@ describe('CommitDetailPanel ref pills', () => {
 // Clipboard API rather than off a prop — the requirement is that the user ends
 // up holding a ref `git` can look up.
 describe('CommitDetailPanel ref copy value', () => {
-  const copyRefName = async () => {
-    const written: string[] = []
+  // bun runs every test file in one process, so the stub is installed per test
+  // and the original descriptor put back — a leaked fake clipboard would make
+  // every later CopyButton test order-dependent.
+  const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+  let written: string[] = []
+  beforeEach(() => {
+    written = []
     Object.defineProperty(navigator, 'clipboard', {
       value: { writeText: async (text: string) => void written.push(text) },
       configurable: true,
     })
+  })
+  afterEach(() => {
+    if (originalClipboard) Object.defineProperty(navigator, 'clipboard', originalClipboard)
+    else delete (navigator as { clipboard?: unknown }).clipboard
+  })
+
+  const copyRefName = async () => {
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: /ref name/i }))
     })

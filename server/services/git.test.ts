@@ -92,6 +92,10 @@ beforeAll(() => {
   runGit(remotesRepositoryPath, 'update-ref', 'refs/remotes/origin/main', 'main')
   runGit(remotesRepositoryPath, 'update-ref', 'refs/remotes/upstream/main', 'main')
   runGit(remotesRepositoryPath, 'update-ref', 'refs/remotes/origin/published', 'main')
+  // A user's `log.decorate=full` makes `%d`/`%D` print `refs/heads/main` and
+  // `refs/remotes/origin/main` unless the short form is pinned on the command
+  // line — and every decoration test on this fixture assumes the short form.
+  runGit(remotesRepositoryPath, 'config', 'log.decorate', 'full')
 
   // The two shapes that break a structural read of `refs/remotes`, which is why
   // the remote names are read from `git remote` and only *filtered* by the refs:
@@ -101,23 +105,37 @@ beforeAll(() => {
   //     remote and the branch `main` without being told the name.
   //   - `unfetched` is configured but has no refs, so it can never appear in a
   //     decoration and must not be offered as a name to classify against.
+  //   - `fork` is configured (by hand — `git remote add` refuses a name that
+  //     nests another, but the config is accepted and listed) and has no refs
+  //     of its own; `fork/alice`'s refs start with `refs/remotes/fork/` all the
+  //     same, and must not count for it.
   const slashRemoteRepositoryPath = join(scratchRoot, 'slash-remote-repo')
   runGit(scratchRoot, 'init', '-b', 'main', slashRemoteRepositoryPath)
   runGit(slashRemoteRepositoryPath, 'commit', '--allow-empty', '-m', 'shared commit')
   runGit(slashRemoteRepositoryPath, 'remote', 'add', 'fork/alice', 'https://example.invalid/a.git')
   runGit(slashRemoteRepositoryPath, 'remote', 'add', 'unfetched', 'https://example.invalid/u.git')
+  runGit(slashRemoteRepositoryPath, 'config', 'remote.fork.url', 'https://example.invalid/f.git')
   runGit(slashRemoteRepositoryPath, 'update-ref', 'refs/remotes/fork/alice/main', 'main')
 
-  // A repository where a local branch collides with a remote-tracking ref of the
+  // A repository where local branches collide with remote-tracking refs of the
   // same name. git's ref *shortening* disambiguates the remote one as
-  // `remotes/origin/main`, so reading `%(refname:short)` structurally reported a
-  // remote named `remotes` and lost `origin` altogether.
+  // `remotes/origin/main` and the local one as `heads/origin/main`, so every
+  // `%(refname:short)` read in the service was wrong in its own way: the remote
+  // reader reported a remote named `remotes` and lost `origin`, the branch
+  // listing named a branch no decoration prints, and `origin/HEAD` — pointed at
+  // the colliding `origin/trunk` here, so the default is `trunk` only if it is
+  // resolved right and `main` if the heuristic silently takes over — shortened
+  // to a name the `origin/` strip could not undo.
   const ambiguousRemoteRepositoryPath = join(scratchRoot, 'ambiguous-remote-repo')
   runGit(scratchRoot, 'init', '-b', 'main', ambiguousRemoteRepositoryPath)
   runGit(ambiguousRemoteRepositoryPath, 'commit', '--allow-empty', '-m', 'shared commit')
   runGit(ambiguousRemoteRepositoryPath, 'remote', 'add', 'origin', 'https://example.invalid/r.git')
   runGit(ambiguousRemoteRepositoryPath, 'update-ref', 'refs/remotes/origin/main', 'main')
+  runGit(ambiguousRemoteRepositoryPath, 'update-ref', 'refs/remotes/origin/trunk', 'main')
   runGit(ambiguousRemoteRepositoryPath, 'branch', 'origin/main')
+  runGit(ambiguousRemoteRepositoryPath, 'branch', 'origin/trunk')
+  runGit(ambiguousRemoteRepositoryPath, 'branch', 'trunk')
+  runGit(ambiguousRemoteRepositoryPath, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk')
 
   // A repository with a dirty working tree, for the uncommitted-changes tests: a
   // committed base, then a modification, a deletion, and an untracked file left
@@ -268,8 +286,10 @@ describe('createGitService', () => {
     const result = await service.readCommitLog('slash-remote-repo', { limit: 100 })
     if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
     // Not `fork`: that would split the ref into a remote and a branch
-    // `alice/main`, neither of which exists. And not `unfetched`: configured,
-    // but with no refs it can never appear in a decoration.
+    // `alice/main`, neither of which exists — and it is configured, with no refs
+    // of its own, so a plain prefix test would admit it on `fork/alice`'s refs.
+    // And not `unfetched`: configured, but with no refs it can never appear in
+    // a decoration.
     expect(result.log.remotes).toEqual(['fork/alice'])
 
     // End to end: with the right name, the branch and its remote unify into one
@@ -291,6 +311,20 @@ describe('createGitService', () => {
     if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
     expect(result.log.remotes).toEqual(['origin'])
     expect(result.log.remotes).not.toContain('remotes')
+  })
+
+  // Regression: `%d` honours `log.decorate`, and the grouper is written against
+  // the short form. The fixture sets `log.decorate=full`; the short form has to
+  // be pinned on the command line for these to come back as anything the pills
+  // can classify.
+  test('decorations arrive short whatever `log.decorate` says', async () => {
+    const service = createGitService({ rootAbsolutePath: scratchRoot })
+    const result = await service.readCommitLog('remotes-repo', { limit: 100 })
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+    const commit = result.log.commits[0]!
+    expect(commit.refs).toContain('HEAD -> main')
+    expect(commit.refs).toContain('origin/main')
+    expect(commit.refs.some((ref) => ref.includes('refs/'))).toBe(false)
   })
 })
 
@@ -519,6 +553,23 @@ describe('readBranches', () => {
       { name: 'main', isDefault: true, isCurrent: true },
       { name: 'feature-x', isDefault: false, isCurrent: false },
       { name: 'side', isDefault: false, isCurrent: false },
+    ])
+  })
+
+  // Regression: the listing read `%(refname:short)`, which names the local
+  // `origin/main` here `heads/origin/main` — so the compare link the pill builds
+  // for it failed the membership guard against this very listing — and the
+  // default was resolved from `symbolic-ref --short`, whose `remotes/origin/trunk`
+  // an `origin/` strip cannot undo, so it fell through to `main`.
+  test('branch names and the default survive a local/remote name collision', async () => {
+    const result = await service().readBranches('ambiguous-remote-repo')
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+    expect(result.branches.defaultBranch).toBe('trunk')
+    expect(result.branches.branches).toEqual([
+      { name: 'trunk', isDefault: true, isCurrent: false },
+      { name: 'main', isDefault: false, isCurrent: true },
+      { name: 'origin/main', isDefault: false, isCurrent: false },
+      { name: 'origin/trunk', isDefault: false, isCurrent: false },
     ])
   })
 

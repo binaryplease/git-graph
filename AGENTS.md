@@ -241,12 +241,18 @@ and the untracked-binary notice), plus the remote names the ref pills classify
 against — three fixtures, because the reader has three ways to be wrong: a
 `remotes-repo` (refs written with `update-ref`: `main` in sync with two remotes,
 one remote-only branch, one local-only branch, grouped end to end from real
-decorations), a `slash-remote-repo` (a remote actually named `fork/alice`, which
-must be reported whole rather than cut at its first slash, alongside a
-configured-but-unfetched remote that must not be reported at all), and an
-`ambiguous-remote-repo` (a local branch colliding with a remote-tracking ref, so
-git's shortening prints `remotes/origin/main` — the name must come back as
-`origin`, never as a forged remote called `remotes`). The `git show`/`git diff` parsers
+decorations, with `log.decorate=full` set in the fixture so the pinned
+`--decorate=short` is what keeps them short), a `slash-remote-repo` (a remote
+actually named `fork/alice`, which must be reported whole rather than cut at its
+first slash, alongside a configured-but-unfetched remote that must not be
+reported at all — one of them, `fork`, a hand-configured path prefix of
+`fork/alice` that must not be admitted on the longer name's refs), and an
+`ambiguous-remote-repo` (local branches colliding with remote-tracking refs, so
+git's shortening prints `remotes/origin/main` and `heads/origin/main` — the
+remote name must come back as `origin`, never as a forged remote called
+`remotes`; the branch listing must say `origin/main`; and the default branch
+must follow `origin/HEAD` to the colliding `trunk` rather than fall back to
+`main`). The `git show`/`git diff` parsers
 (`commitDetail.ts`, `fileDiff.ts`) and the route membership guards — path *and*
 ref — are covered too, and client components have DOM tests (`bunfig.toml`
 preloads happy-dom via `src/test/setup.ts`), including `MultiFileDiffView`'s
@@ -283,7 +289,7 @@ covered too: `services/port.test.ts` (probe/walk against real binds),
 `bind-exposure.test.ts` (loopback-default / non-loopback-refusal, ADR-0037 §4),
 `cli/args.test.ts` (argv routing + flag parsing), and `scripts/dev-ports.test.ts`
 (env pinning + reassignment announcements).
-Currently 230 tests across 18 files.
+Currently 232 tests across 18 files.
 
 ## UX conventions
 

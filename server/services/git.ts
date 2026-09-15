@@ -2,7 +2,11 @@ import { existsSync } from 'node:fs'
 import { readdir } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import { COMMIT_LOG_ARGUMENTS, parseGitLog } from '../../shared/gitLog'
-import { COMMIT_DETAIL_ARGUMENTS, parseCommitDetail } from '../../shared/commitDetail'
+import {
+  COMMIT_DETAIL_ARGUMENTS,
+  parseCommitDetail,
+  type ParsedCommitDetail,
+} from '../../shared/commitDetail'
 import {
   FILE_DIFF_ARGUMENTS,
   MAX_FILE_DIFF_BYTES,
@@ -94,6 +98,16 @@ export type ReadWorkingFileDiffResult =
 // that owns what may be handed to the shell.
 const COMMIT_HASH_PATTERN = /^[0-9a-fA-F]{4,40}$/
 
+/** Local branches live here; stripped from a full `%(refname)` to get the branch name. */
+const LOCAL_BRANCH_PREFIX = 'refs/heads/'
+
+/** git's line-per-entry stdout as trimmed, non-empty lines. */
+const nonEmptyLines = (stdout: string) =>
+  stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+
 // A `.git` entry marks a repository — a directory for normal clones, a file
 // for worktrees and submodules. Both render fine, so both count.
 const isGitRepository = (directoryPath: string) => existsSync(join(directoryPath, '.git'))
@@ -166,6 +180,14 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
    *   bare `git remote` read would let a configured-but-empty remote `foo`
    *   claim the local branch `foo/bar` as its own.
    *
+   * A ref counts for the **longest** configured name that prefixes it, and for
+   * that name only. `git remote add` refuses a name that nests another, but a
+   * hand-edited config holding both `fork` and `fork/alice` is accepted and
+   * listed, and then `refs/remotes/fork/alice/main` starts with `refs/remotes/
+   * fork/` too — a plain prefix test would admit the empty `fork` on the
+   * strength of `fork/alice`'s refs, which is exactly the forged claim the
+   * filter exists to prevent.
+   *
    * The refs are read as full `%(refname)`, not `%(refname:short)`: shortening
    * is ambiguity-sensitive, so a repository holding both `refs/heads/origin/main`
    * and `refs/remotes/origin/main` prints the latter as `remotes/origin/main` —
@@ -187,20 +209,18 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
     ])
     if (configured.exitCode !== 0 || trackingRefs.exitCode !== 0) return []
 
-    const trackingRefNames = trackingRefs.stdout
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
+    // Longest first, so the first prefix that matches a ref is the name that
+    // owns it.
+    const configuredNames = nonEmptyLines(configured.stdout).sort(
+      (first, second) => second.length - first.length,
+    )
+    const namesWithRefs = new Set<string>()
+    for (const refName of nonEmptyLines(trackingRefs.stdout)) {
+      const owner = configuredNames.find((name) => refName.startsWith(`refs/remotes/${name}/`))
+      if (owner !== undefined) namesWithRefs.add(owner)
+    }
 
-    const remoteNames = configured.stdout
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .filter((remoteName) =>
-        trackingRefNames.some((refName) => refName.startsWith(`refs/remotes/${remoteName}/`)),
-      )
-
-    return remoteNames.sort((first, second) => first.localeCompare(second))
+    return [...namesWithRefs].sort((first, second) => first.localeCompare(second))
   }
 
   /**
@@ -260,9 +280,28 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
     // the refs it reports can be classified and grouped by whoever renders them
     // — the standalone commit tab has no other payload to learn them from.
     const repositoryPath = join(servedRoot, repository.relativePath)
-    const [{ stdout, stderr, exitCode }, remotes] = await Promise.all([
-      runGit(repositoryPath, [...COMMIT_DETAIL_ARGUMENTS, commitHash, '--']),
+    const [shown, remotes] = await Promise.all([
+      showCommit(repositoryPath, commitHash),
       readRemoteNames(repositoryPath),
+    ])
+    if (!shown.ok) return shown
+    return { ok: true, detail: { ...shown.parsed, remotes } }
+  }
+
+  /**
+   * `git show` for one commit, parsed but without the remote names — the half
+   * of {@link readCommitDetail} that {@link readFileDiff} also needs. The file
+   * diff only reads the commit's file list and parents, so it must not pay for
+   * the two extra `git` processes the remote names cost on every diff open.
+   */
+  async function showCommit(
+    repositoryPath: string,
+    commitHash: string,
+  ): Promise<{ ok: true; parsed: ParsedCommitDetail } | (ReadCommitDetailResult & { ok: false })> {
+    const { stdout, stderr, exitCode } = await runGit(repositoryPath, [
+      ...COMMIT_DETAIL_ARGUMENTS,
+      commitHash,
+      '--',
     ])
 
     if (exitCode !== 0) {
@@ -280,7 +319,7 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
 
     const parsed = parseCommitDetail(stdout)
     if (!parsed) return { ok: false, reason: 'git-failed', detail: 'could not parse git show output' }
-    return { ok: true, detail: { ...parsed, remotes } }
+    return { ok: true, parsed }
   }
 
   /**
@@ -299,13 +338,16 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
     commitHash: string,
     filePath: string,
   ): Promise<ReadFileDiffResult> {
+    if (!COMMIT_HASH_PATTERN.test(commitHash)) return { ok: false, reason: 'invalid-hash' }
+
     const repository = await resolveRepository(repositoryRelativePath)
     if (!repository) return { ok: false, reason: 'unknown-repository' }
 
-    const detailResult = await readCommitDetail(repositoryRelativePath, commitHash)
-    if (!detailResult.ok) return detailResult
+    const repositoryPath = join(servedRoot, repository.relativePath)
+    const shown = await showCommit(repositoryPath, commitHash)
+    if (!shown.ok) return shown
 
-    const { detail } = detailResult
+    const { parsed: detail } = shown
     const fileChange = detail.files.find(
       (candidate) => candidate.path === filePath || candidate.previousPath === filePath,
     )
@@ -315,7 +357,6 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
     // caller's. The old side of a rename lives at the previous path.
     const newPath = fileChange.path
     const oldPath = fileChange.previousPath ?? fileChange.path
-    const repositoryPath = join(servedRoot, repository.relativePath)
     const pathArguments = fileChange.previousPath !== null ? [oldPath, newPath] : [newPath]
 
     const base: FileDiff = {
@@ -389,9 +430,13 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
     currentBranch: string | null,
   ): Promise<string | null> {
     if (branchNames.length === 0) return null
-    const originHead = await runGit(repositoryPath, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
+    // Read the symref in full and strip the structural prefix. `--short` would
+    // print `remotes/origin/main` when a local `origin/main` makes the short
+    // name ambiguous, and an `origin/` strip of that leaves a name no branch
+    // listing contains — silently falling through to the heuristics below.
+    const originHead = await runGit(repositoryPath, ['symbolic-ref', 'refs/remotes/origin/HEAD'])
     if (originHead.exitCode === 0) {
-      const originDefault = originHead.stdout.trim().replace(/^origin\//, '')
+      const originDefault = originHead.stdout.trim().replace(/^refs\/remotes\/origin\//, '')
       if (branchNames.includes(originDefault)) return originDefault
     }
     if (branchNames.includes('main')) return 'main'
@@ -400,21 +445,29 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
     return branchNames[0] ?? null
   }
 
-  /** Read a repository's local branch names, the checked-out one, and the default. */
+  /**
+   * Read a repository's local branch names, the checked-out one, and the default.
+   *
+   * Full `%(refname)` with the `refs/heads/` prefix stripped, never
+   * `%(refname:short)`: shortening is ambiguity-sensitive, so a local branch
+   * `origin/main` next to `refs/remotes/origin/main` lists as `heads/origin/main`
+   * — a name no `%d` decoration ever prints, so the compare link the pill builds
+   * for that branch would fail the membership guard against this very listing.
+   */
   async function readBranchData(repositoryPath: string) {
     const { stdout, stderr, exitCode } = await runGit(repositoryPath, [
       'for-each-ref',
-      `--format=%(refname:short)${FIELD_SEPARATOR}%(HEAD)`,
+      `--format=%(refname)${FIELD_SEPARATOR}%(HEAD)`,
       'refs/heads',
     ])
     if (exitCode !== 0) return { ok: false as const, detail: stderr.trim() }
 
     const branchNames: string[] = []
     let currentBranch: string | null = null
-    for (const line of stdout.split('\n')) {
-      if (!line.trim()) continue
-      const [name, headMarker] = line.split(FIELD_SEPARATOR)
-      if (!name) continue
+    for (const line of nonEmptyLines(stdout)) {
+      const [refName, headMarker] = line.split(FIELD_SEPARATOR)
+      if (!refName?.startsWith(LOCAL_BRANCH_PREFIX)) continue
+      const name = refName.slice(LOCAL_BRANCH_PREFIX.length)
       branchNames.push(name)
       if (headMarker?.trim() === '*') currentBranch = name
     }
