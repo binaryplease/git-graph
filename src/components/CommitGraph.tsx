@@ -84,20 +84,20 @@ export type CommitGraphStats = {
   matchCount: number | null
 }
 
-// A stable empty default, so a host that passes no remote names does not
-// invalidate the row memo on every render with a fresh array literal.
-const NO_REMOTES: string[] = []
-
 export type CommitGraphProps = {
   /** Commits in topological order (children before all of their parents). */
   commits: GitCommit[]
   /**
-   * The repository's remote names (`CommitLog.remotes`). Ref decorations are
-   * grouped against them, so a branch and the remotes that agree with it render
-   * as one pill. Omitted, decorations still group but remote-tracking refs are
-   * only recognised under git's default remote name.
+   * The repository's remote names (`CommitLog.remotes`), which arrive on the
+   * same payload as the commits. Ref decorations are grouped against them, so a
+   * branch and the remotes that agree with it render as one pill.
+   *
+   * Required, not optional: an empty array has to mean "this repository has no
+   * remotes", so there is no value that could stand for "the host did not say" —
+   * a pill would otherwise have to guess, and a guessed remote is a sync claim
+   * about a ref that may not exist.
    */
-  remotes?: string[]
+  remotes: string[]
   /** Fuzzy search query; matching rows highlight, the rest dim. */
   searchQuery?: string
   /** Reports derived numbers for host chrome (readouts). Pass a stable callback. */
@@ -118,7 +118,7 @@ export type CommitGraphProps = {
 
 export function CommitGraph({
   commits,
-  remotes = NO_REMOTES,
+  remotes,
   searchQuery = '',
   onStats,
   selectedHash = null,

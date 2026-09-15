@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { parseRefDecorations } from './gitLog'
 import {
   classifyRefDecoration,
   groupRefDecorations,
@@ -12,21 +13,21 @@ import {
 
 describe('classifyRefDecoration', () => {
   test('recognises the checked-out branch, a plain branch, and a tag', () => {
-    expect(classifyRefDecoration('HEAD -> main')).toEqual({
+    expect(classifyRefDecoration('HEAD -> main', [])).toEqual({
       kind: 'branch',
       name: 'main',
       isHead: true,
     })
-    expect(classifyRefDecoration('feature')).toEqual({
+    expect(classifyRefDecoration('feature', [])).toEqual({
       kind: 'branch',
       name: 'feature',
       isHead: false,
     })
-    expect(classifyRefDecoration('tag: v1.0')).toEqual({ kind: 'tag', name: 'v1.0' })
+    expect(classifyRefDecoration('tag: v1.0', [])).toEqual({ kind: 'tag', name: 'v1.0' })
   })
 
   test('a bare HEAD is the detached pointer, not a branch', () => {
-    expect(classifyRefDecoration('HEAD')).toEqual({ kind: 'head' })
+    expect(classifyRefDecoration('HEAD', [])).toEqual({ kind: 'head' })
   })
 
   test('a decoration is remote only when its prefix names a real remote', () => {
@@ -61,17 +62,44 @@ describe('classifyRefDecoration', () => {
     })
   })
 
-  test('with no remote names at all, git’s default name is still recognised', () => {
+  // Regression: an empty remote list is git's authoritative "this repository has
+  // no remote-tracking refs", so `origin/main` there is a *local branch* someone
+  // created with that name. Guessing `origin` produced a pill claiming a sync
+  // with `refs/remotes/origin/main`, a ref that does not exist in the repository
+  // at all — the one claim acceptance criterion 4 forbids.
+  test('no remotes means no remote: a local branch named origin/main is not remote-tracking', () => {
     expect(classifyRefDecoration('origin/main', [])).toEqual({
-      kind: 'remote',
-      name: 'main',
-      remote: 'origin',
+      kind: 'branch',
+      name: 'origin/main',
+      isHead: false,
     })
+    const groups = groupRefDecorations(['HEAD -> main', 'origin/main'], [])
+    expect(groups.map((group) => [group.kind, group.name, group.remotes])).toEqual([
+      ['branch', 'main', []],
+      ['branch', 'origin/main', []],
+    ])
+    // No pill invents a marker, and no tooltip claims a sync.
+    expect(groups.every((group) => refGroupLabel(group).markerRemotes.length === 0)).toBe(true)
+    expect(groups.map(refGroupTitle).some((title) => title.includes('in sync'))).toBe(false)
+  })
+
+  // Regression: `HEAD -> x` is git stating HEAD is on x, and HEAD is only ever
+  // on a local branch. Reading `HEAD -> origin/other` as a remote-tracking ref
+  // dropped the HEAD marker and let the branch collect remotes not its own.
+  test('a checked-out branch named like a remote ref stays a local branch', () => {
+    expect(classifyRefDecoration('HEAD -> origin/other', ['origin'])).toEqual({
+      kind: 'branch',
+      name: 'origin/other',
+      isHead: true,
+    })
+    const [group] = groupRefDecorations(['HEAD -> origin/other'], ['origin'])
+    expect(group!.isHead).toBe(true)
+    expect(refGroupLabel(group!)).toEqual({ text: 'origin/other', markerRemotes: [] })
   })
 
   test('blank decorations are dropped', () => {
-    expect(classifyRefDecoration('   ')).toBeNull()
-    expect(classifyRefDecoration('tag: ')).toBeNull()
+    expect(classifyRefDecoration('   ', [])).toBeNull()
+    expect(classifyRefDecoration('tag: ', [])).toBeNull()
   })
 })
 
@@ -172,7 +200,29 @@ describe('groupRefDecorations', () => {
   })
 
   test('undecorated commits yield no groups', () => {
-    expect(groupRefDecorations([])).toEqual([])
+    expect(groupRefDecorations([], [])).toEqual([])
+  })
+
+  // Regression, end to end from git's own output: a tag named `v1,origin/release`
+  // must not manufacture a remote for the `release` branch. Parsing and grouping
+  // are tested together here because the forgery needed both halves — a torn
+  // decoration plus a grouper willing to fold the fragment in.
+  test('a comma in a tag name cannot forge a remote onto another branch', () => {
+    const decorations = parseRefDecorations(
+      ' (HEAD -> main, tag: v1,origin/release, origin/main, release)',
+    )
+    const groups = groupRefDecorations(decorations, ['origin'])
+    expect(groups.map((group) => [group.kind, group.name, group.remotes])).toEqual([
+      ['branch', 'main', ['origin']],
+      ['tag', 'v1,origin/release', []],
+      ['branch', 'release', []],
+    ])
+    // `release` has no remote-tracking ref here, and its pill says so.
+    const releaseGroup = groups[2]!
+    expect(refGroupLabel(releaseGroup).markerRemotes).toEqual([])
+    expect(refGroupTitle(releaseGroup)).toBe(
+      'local branch release — no remote-tracking ref at this commit',
+    )
   })
 })
 
@@ -195,7 +245,7 @@ describe('refGroupLabel', () => {
   })
 
   test('a tag prints its bare name', () => {
-    const [group] = groupRefDecorations(['tag: v1.0'])
+    const [group] = groupRefDecorations(['tag: v1.0'], [])
     expect(refGroupLabel(group!)).toEqual({ text: 'v1.0', markerRemotes: [] })
   })
 })
@@ -220,12 +270,12 @@ describe('refGroupTitle', () => {
     expect(refGroupTitle(remoteGroup!)).toBe(
       'remote-tracking branch origin/feature — no local branch',
     )
-    const [tagGroup] = groupRefDecorations(['tag: v1.0'])
+    const [tagGroup] = groupRefDecorations(['tag: v1.0'], [])
     expect(refGroupTitle(tagGroup!)).toBe('tag v1.0')
   })
 
   test('a detached HEAD says so', () => {
-    const [group] = groupRefDecorations(['HEAD'])
+    const [group] = groupRefDecorations(['HEAD'], [])
     expect(refGroupTitle(group!)).toBe('detached HEAD — no branch is checked out at this commit')
   })
 })

@@ -61,13 +61,24 @@ consumers (standalone instance · shared package · nightshift-ui module):
     mhutchie/GitLens/GitKraken). Do not "improve" its behaviour without
     updating the regression fixture in `graphLayout.test.ts`, which pins the
     prototype-captured output.
-  - `gitLog.ts` — `git log` wire format + parser (unit separator `%x1f`).
+  - `gitLog.ts` — `git log` wire format + parser (unit separator `%x1f`). `%d`
+    decorations split on `", "`, never on the bare comma: a comma is legal in a
+    ref name, a space is not, so that is the only exact split — splitting on `,`
+    tears the tag `v1,origin/release` into a fragment shaped like a
+    remote-tracking ref, which `refGroup.ts` would then fold into an unrelated
+    branch's pill as a remote that agrees with it.
   - `refGroup.ts` — folds a commit's `%d` decorations into one group per *ref
     identity*, so a local branch and the remotes pointing at the same commit
     render as one pill (`main ⇅ origin`) instead of one pill per decoration.
     Classification takes the repository's own remote names (`CommitLog.remotes`
     / `CommitDetail.remotes`) rather than guessing an `origin/` prefix, which is
     what tells the remote-tracking ref `fork/main` from a local `feature/main`.
+    The remote list is a **required** argument (and a required `CommitGraph`
+    prop) with no fallback: an empty list is git's authoritative "no remotes
+    here", so `origin/main` in such a repository is a local branch someone named
+    that way, and guessing otherwise would claim a sync with a ref that does not
+    exist. `HEAD -> x` likewise settles a case the short `%d` form cannot — HEAD
+    is only ever on a local branch, so a checked-out `origin/other` is local.
     Grouping only ever sees one commit's decorations, so a diverged branch and
     remote keep separate pills and no "synced" claim can be invented; ahead/
     behind counts would need `%(upstream:track)` and are deliberately absent
@@ -197,7 +208,10 @@ seams (link vs in-app handler), and `detailLayout`'s schema default/fallback (AD
 Ref grouping is covered on all three levels: `shared/refGroup.test.ts` for the
 pure classifier and folding (synced branch, several remotes, diverged
 branch/remote, remote-only, tag never folded, detached HEAD, slash-named
-remotes), then the same cases as pills on *both* rendering surfaces
+remotes, a no-remotes repository whose local `origin/main` must not read as
+remote-tracking, a checked-out branch named like a remote ref, and a
+comma-bearing tag name that must not forge a remote onto another branch), then
+the same cases as pills on *both* rendering surfaces
 (`CommitGraph`'s rows and `CommitDetailPanel`'s refs row, where the unified pill
 must still offer exactly one compare affordance). The standalone surface is
 covered too: `services/port.test.ts` (probe/walk against real binds),
@@ -205,7 +219,7 @@ covered too: `services/port.test.ts` (probe/walk against real binds),
 `bind-exposure.test.ts` (loopback-default / non-loopback-refusal, ADR-0037 §4),
 `cli/args.test.ts` (argv routing + flag parsing), and `scripts/dev-ports.test.ts`
 (env pinning + reassignment announcements).
-Currently 204 tests across 17 files.
+Currently 208 tests across 17 files.
 
 ## UX conventions
 

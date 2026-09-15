@@ -64,28 +64,27 @@ const HEAD_POINTER = /^HEAD\s*->\s*/
 // repository configured to print them long says `remotes/origin/main`. Both
 // mean the same ref.
 const REMOTES_PREFIX = 'remotes/'
-// Remote names are arbitrary, so classification needs the repository's own list
-// (the server reads it from `git for-each-ref refs/remotes`). When a caller has
-// no list — an older host that does not pass one yet — fall back to the one
-// remote name git itself creates by default, which is strictly better than
-// classifying `origin/main` as a local branch.
-const FALLBACK_REMOTE_NAME = 'origin'
 
 /**
  * Which of `remoteNames` a short remote-tracking ref belongs to, or null when
- * none does. Longest match first: a remote may legally be named with a slash
- * (`fork/alice`), and only the longest match splits `fork/alice/main` into the
- * right remote and the right branch.
+ * none does — the longest match wins, because a remote may legally be named
+ * with a slash (`fork/alice`) and only the longest match splits
+ * `fork/alice/main` into the right remote and the right branch.
+ *
+ * `remoteNames` is the repository's own list and there is deliberately no
+ * fallback guess: an empty list is git's authoritative answer that the
+ * repository has no remote-tracking refs, so a decoration that merely *looks*
+ * like `origin/<something>` there is a local branch, and claiming otherwise
+ * would invent a remote — and then a sync with it — that does not exist.
  */
 function matchRemoteName(shortRef: string, remoteNames: readonly string[]): string | null {
-  const byLengthDescending = [...remoteNames].sort(
-    (first, second) => second.length - first.length,
-  )
-  for (const remoteName of byLengthDescending) {
+  let longestMatch: string | null = null
+  for (const remoteName of remoteNames) {
     const prefix = `${remoteName}/`
-    if (shortRef.startsWith(prefix) && shortRef.length > prefix.length) return remoteName
+    if (!shortRef.startsWith(prefix) || shortRef.length <= prefix.length) continue
+    if (longestMatch === null || remoteName.length > longestMatch.length) longestMatch = remoteName
   }
-  return null
+  return longestMatch
 }
 
 /** The remote name a `remotes/`-prefixed ref belongs to when no configured name matches. */
@@ -108,10 +107,16 @@ export type ClassifiedRefDecoration =
  * whose leading segments name a remote git itself reported, so `feature/main`
  * stays the local branch it is and `fork/main` is recognised as a remote ref
  * when `fork` is a remote.
+ *
+ * `remoteNames` is required, with no default: it is the repository's own
+ * `CommitLog.remotes`/`CommitDetail.remotes`, and a defaulted parameter would
+ * make "the caller passed nothing" indistinguishable from "git reported no
+ * remotes" — the one case where a guess produces a sync claim about a ref that
+ * does not exist.
  */
 export function classifyRefDecoration(
   decoration: string,
-  remoteNames: readonly string[] = [],
+  remoteNames: readonly string[],
 ): ClassifiedRefDecoration | null {
   const trimmed = decoration.trim()
   if (!trimmed) return null
@@ -126,6 +131,12 @@ export function classifyRefDecoration(
   // detached on a commit that also carries branches, git lists both — and they
   // must not merge, because HEAD is not on any of them.
   if (pointee === 'HEAD') return { kind: 'head' }
+  // `HEAD -> x` is git saying HEAD is *on* x, which it only ever is for a local
+  // branch. That settles the one case the short `%d` form cannot: a local branch
+  // literally named `origin/other` prints exactly like the remote-tracking ref
+  // `refs/remotes/origin/other`, and reading it as remote would both drop its
+  // HEAD marker and let it collect remotes it has nothing to do with.
+  if (isHead) return { kind: 'branch', name: pointee, isHead: true }
 
   if (pointee.startsWith(REMOTES_PREFIX)) {
     const shortRef = pointee.slice(REMOTES_PREFIX.length)
@@ -135,15 +146,12 @@ export function classifyRefDecoration(
     }
   }
 
-  const configuredRemote = matchRemoteName(pointee, remoteNames)
-  const remoteName =
-    configuredRemote ??
-    (remoteNames.length === 0 ? matchRemoteName(pointee, [FALLBACK_REMOTE_NAME]) : null)
+  const remoteName = matchRemoteName(pointee, remoteNames)
   if (remoteName !== null) {
     return { kind: 'remote', name: pointee.slice(remoteName.length + 1), remote: remoteName }
   }
 
-  return { kind: 'branch', name: pointee, isHead }
+  return { kind: 'branch', name: pointee, isHead: false }
 }
 
 /**
@@ -164,10 +172,14 @@ function groupKey(classified: ClassifiedRefDecoration): string {
  * 'origin/main', 'upstream/main', 'tag: v1.0']` and the remotes `['origin',
  * 'upstream']` this yields two groups: the checked-out branch `main` agreeing
  * with both remotes, and the tag.
+ *
+ * `remoteNames` is required for the reason given on {@link classifyRefDecoration}:
+ * an empty list must mean "this repository has no remotes", never "nobody told
+ * me".
  */
 export function groupRefDecorations(
   decorations: readonly string[],
-  remoteNames: readonly string[] = [],
+  remoteNames: readonly string[],
 ): RefGroup[] {
   const groups: RefGroup[] = []
   const groupByKey = new Map<string, RefGroup>()

@@ -17,13 +17,23 @@ export const COMMIT_LOG_ARGUMENTS = [
   '--date=short',
 ] as const
 
+// git separates decorations with a comma *and a space*, and a ref name may not
+// contain a space (`git check-ref-format` rejects it) — so `", "` can never
+// occur inside one entry, which makes it the only exact split. Splitting on the
+// bare comma instead tears a legal ref name like the tag `v1,origin/release`
+// into `tag: v1` plus a fragment `origin/release`, and a fragment shaped like
+// `<remote>/<branch>` is indistinguishable from a real remote-tracking ref: it
+// would be folded into an unrelated branch's pill as a remote that agrees with
+// it, which is a sync claim manufactured from a tag name.
+const DECORATION_SEPARATOR = ', '
+
 /** Split a `%d` decoration like ` (HEAD -> main, origin/main, tag: v1)` into refs. */
 export function parseRefDecorations(rawDecoration: string): string[] {
   if (!rawDecoration.trim()) return []
   return rawDecoration
     .replace(/^\s*\(/, '')
     .replace(/\)\s*$/, '')
-    .split(',')
+    .split(DECORATION_SEPARATOR)
     .map((entry) => entry.trim())
     .filter(Boolean)
 }

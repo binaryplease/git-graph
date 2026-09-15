@@ -28,17 +28,17 @@ const marker = <div>INLINE_DETAIL_MARKER</div>
 
 describe('CommitGraph inline detail slot', () => {
   test('renders the detail when a row is selected and a detail is provided', () => {
-    render(<CommitGraph commits={commits} selectedHash="aaa1111" selectedDetail={marker} />)
+    render(<CommitGraph commits={commits} remotes={[]} selectedHash="aaa1111" selectedDetail={marker} />)
     expect(screen.getByText('INLINE_DETAIL_MARKER')).toBeTruthy()
   })
 
   test('renders no detail when a detail is provided but nothing is selected', () => {
-    render(<CommitGraph commits={commits} selectedHash={null} selectedDetail={marker} />)
+    render(<CommitGraph commits={commits} remotes={[]} selectedHash={null} selectedDetail={marker} />)
     expect(screen.queryByText('INLINE_DETAIL_MARKER')).toBeNull()
   })
 
   test('renders no detail in sidebar mode (no detail node passed)', () => {
-    render(<CommitGraph commits={commits} selectedHash="aaa1111" selectedDetail={null} />)
+    render(<CommitGraph commits={commits} remotes={[]} selectedHash="aaa1111" selectedDetail={null} />)
     expect(screen.queryByText('INLINE_DETAIL_MARKER')).toBeNull()
     // The graph itself still renders both rows.
     expect(screen.getByText('child')).toBeTruthy()
@@ -107,6 +107,22 @@ describe('CommitGraph ref pills', () => {
     expect(pills).toHaveLength(1)
     expect(pills[0]!.text).toBe('origin/feature')
     expect(pills[0]!.className).toContain('ref-remote')
+  })
+
+  // Regression: with `remotes={[]}` — git's answer for a repository with no
+  // remote-tracking refs — a local branch that merely looks like `origin/x` must
+  // not be folded in as a remote. The pill used to read `main ⇅ origin` and claim
+  // a sync with a ref that does not exist.
+  test('no remotes: a branch named origin/main renders on its own, with no synced marker', () => {
+    const { container } = render(
+      <CommitGraph commits={[commit({ refs: ['HEAD -> main', 'origin/main'] })]} remotes={[]} />,
+    )
+    const pills = pillsOf(container)
+    expect(pills.map((pill) => pill.text)).toEqual(['HEAD -> main', 'origin/main'])
+    expect(container.querySelector('.ref-synced')).toBeNull()
+    // Classified local, not remote — and nothing in the DOM says "in sync".
+    expect(pills[1]!.className).toContain('ref-branch')
+    expect(container.innerHTML).not.toContain('in sync')
   })
 
   test('a tag is never folded into the branch pill', () => {
