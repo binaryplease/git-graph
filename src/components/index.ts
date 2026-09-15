@@ -25,6 +25,14 @@ export type { CommitDetailPanelProps } from './CommitDetailPanel'
 export { RefPill } from './RefPill'
 export type { RefPillProps } from './RefPill'
 
+// The row-level half of the checked-out signal the pill carries as state — the
+// lane-coloured ring CommitGraph puts before a HEAD row's pills. Exported for
+// the same reason as the graph geometry below: a host that renders its own row
+// beside the graph marks HEAD with this ring, not with a second hand-rolled dot
+// that drifts from it (ADR-0027/ADR-0028).
+export { CheckedOutMarker } from './RefPill'
+export type { CheckedOutMarkerProps } from './RefPill'
+
 // The working-tree node that sits above HEAD in the graph. Rendered *outside*
 // CommitGraph (the pinned layout algorithm never sees a non-commit), so a host
 // composes it directly above the graph and aligns it with `graphContentLeft`.

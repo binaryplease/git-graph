@@ -351,8 +351,10 @@ describe('CommitDetailPanel full-commit and compare affordances', () => {
 describe('CommitDetailPanel ref pills', () => {
   const pillTexts = () =>
     [...document.querySelectorAll('.ref-pill')].map((pill) => pill.textContent ?? '')
+  const remoteSegments = () =>
+    [...document.querySelectorAll('.ref-segment-remote')].map((segment) => segment.textContent ?? '')
 
-  test('a branch and its remotes on this commit render one pill naming each remote', () => {
+  test('a branch and its remotes on this commit render one segmented pill per remote', () => {
     renderPanel({
       detail: {
         ...commitDetail,
@@ -360,7 +362,26 @@ describe('CommitDetailPanel ref pills', () => {
         remotes: ['origin', 'upstream'],
       },
     })
-    expect(pillTexts()).toEqual(['HEAD -> main origin, upstream', 'v1.0'])
+    // The same rendering the graph rows show: segments, no `HEAD -> `, no glyph.
+    expect(pillTexts()).toEqual(['main origin upstream', 'v1.0'])
+    expect(remoteSegments()).toEqual(['origin', 'upstream'])
+    const [headPill] = [...document.querySelectorAll('.ref-pill')]
+    expect(headPill!.className).toContain('ref-checked-out')
+    expect(document.body.innerHTML).not.toContain('HEAD -&gt;')
+    // A merged badge stays a checkable claim: the tooltip names its refs.
+    expect(headPill!.getAttribute('title')).toBe(
+      'local branch main (checked out) — in sync with origin/main, upstream/main',
+    )
+  })
+
+  test('a detached HEAD keeps its own pill and no checked-out state', () => {
+    renderPanel({
+      detail: { ...commitDetail, refs: ['HEAD', 'main'], remotes: ['origin'] },
+    })
+    expect(pillTexts()).toEqual(['HEAD', 'main'])
+    const [headPill] = [...document.querySelectorAll('.ref-pill')]
+    expect(headPill!.className).toContain('ref-head')
+    expect(headPill!.className).not.toContain('ref-checked-out')
   })
 
   test('the unified pill keeps the compare affordance, once, under the bare branch name', () => {
@@ -371,7 +392,7 @@ describe('CommitDetailPanel ref pills', () => {
         remotes: ['origin'],
       },
     })
-    expect(pillTexts()).toEqual(['HEAD -> feature origin'])
+    expect(pillTexts()).toEqual(['feature origin'])
     const compareLinks = screen.getAllByRole('link', {
       name: /compare feature against the default branch/i,
     }) as HTMLAnchorElement[]

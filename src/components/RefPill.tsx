@@ -1,5 +1,4 @@
-import type { ReactNode } from 'react'
-import { IconArrowsUpDown } from '@tabler/icons-react'
+import { Fragment, type ReactNode } from 'react'
 import { refGroupLabel, refGroupTitle, type RefGroup } from '../../shared/refGroup'
 
 // Git ref decorations render on two surfaces — graph rows and the commit
@@ -17,35 +16,84 @@ export type RefPillProps = {
 }
 
 /**
- * One ref pill. A checked-out branch keeps git's own `HEAD ->` marker and the
- * head colour; a branch that agrees with remotes gets a synced marker naming
- * them (`main ⇅ origin`), drawn as a Tabler vector rather than an arrow
- * character (ADR-0022).
+ * One ref pill. A branch that agrees with remotes is a single *segmented* chip:
+ * the branch name, then each remote as a further segment divided off by a
+ * hairline and set subordinate to it — containment says "these are the same
+ * ref", so no glyph sits between them. The glyph that used to is git's own mark
+ * for the opposite state: `%(upstream:trackshort)` prints `=` when a branch and
+ * its upstream agree and reserves the two-direction form for *divergence*.
+ *
+ * A checked-out branch says so through pill state — the head colour it already
+ * had, plus weight and a ring — instead of printing git's `HEAD -> ` plumbing
+ * text, which none of Git Graph, GitLens/GitKraken or VS Code's Source Control
+ * Graph puts on screen either. The row-level half of that signal is
+ * {@link CheckedOutMarker}.
+ *
+ * A ref that exists on exactly one remote and nowhere locally is not in
+ * agreement with anything — it is simply that remote's branch, so it keeps the
+ * qualified name git printed (`origin/feature`) and gains no segments.
  */
 export function RefPill({ group, children }: RefPillProps) {
   const { text, markerRemotes } = refGroupLabel(group)
   // A checked-out branch reads as HEAD, the way it did before its remotes were
   // folded in — the marker is additive, it never replaces the kind.
   const kindClass = group.isHead ? 'head' : group.kind
+  // Only a local branch is ever *checked out*: a detached HEAD is on no branch
+  // at all and names itself `HEAD` in the pill already.
+  const isCheckedOut = group.kind === 'branch' && group.isHead
+  const isSegmented = markerRemotes.length > 0
+  const className = ['ref-pill', `ref-${kindClass}`]
+  if (isSegmented) className.push('ref-segmented')
+  if (isCheckedOut) className.push('ref-checked-out')
+
+  // A segmented pill moves its padding onto the segments, so host-supplied
+  // trailing content becomes a segment of its own rather than sitting flush
+  // against the chip's edge.
+  const trailing = isSegmented && children ? <span className="ref-segment">{children}</span> : children
+
   return (
-    <span className={`ref-pill ref-${kindClass}`} title={refGroupTitle(group)}>
-      {/* The spaces are deliberate: flex gaps space the parts visually, but the
-          pill's text has to read as `HEAD -> main origin` when it is copied or
-          spoken, not run together. Whitespace-only flex items do not render. */}
-      {group.kind === 'branch' && group.isHead && (
-        <span className="ref-head-marker">{'HEAD -> '}</span>
-      )}
-      {text}
-      {markerRemotes.length > 0 && (
-        <>
+    <span className={className.join(' ')} title={refGroupTitle(group)}>
+      {isSegmented ? <span className="ref-segment">{text}</span> : text}
+      {markerRemotes.map((remoteName) => (
+        <Fragment key={remoteName}>
+          {/* The space is deliberate: a whitespace-only flex item does not
+              render, so the hairline divider stays tight while the pill's text
+              still reads as `main origin` when it is copied or spoken. */}
           {' '}
-          <span className="ref-synced">
-            <IconArrowsUpDown size={11} stroke={2.25} aria-hidden />
-            {markerRemotes.join(', ')}
-          </span>
-        </>
-      )}
-      {children}
+          <span className="ref-segment ref-segment-remote">{remoteName}</span>
+        </Fragment>
+      ))}
+      {trailing}
     </span>
+  )
+}
+
+export type CheckedOutMarkerProps = {
+  /** The branch checked out at this commit — named in the marker's description. */
+  branchName: string
+  /** The row's lane colour, so the ring belongs to the branch line beside it. */
+  color: string
+}
+
+/**
+ * The checked-out mark for a commit row: a small lane-coloured ring sitting in
+ * the row before its ref pills, the way Git Graph's own `commitHeadDot` marks
+ * HEAD in the message column. It marks the row even when the head pill has
+ * scrolled out of view horizontally, which pill state alone cannot do.
+ *
+ * Deliberately *not* drawn on the SVG commit node: `CommitGraph` already rings
+ * the **selected** commit there, and a second ring would make "selected" and
+ * "checked out" the same shape.
+ */
+export function CheckedOutMarker({ branchName, color }: CheckedOutMarkerProps) {
+  const description = `The branch "${branchName}" is currently checked out at this commit.`
+  return (
+    <span
+      className="ref-head-dot"
+      style={{ borderColor: color }}
+      role="img"
+      aria-label={description}
+      title={description}
+    />
   )
 }

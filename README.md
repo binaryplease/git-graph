@@ -70,8 +70,11 @@ Running the server directly works too: `bun server/index.ts ~/projects`, or set
   elbow edges. The lane assignment handles octopus merges, root commits,
   disconnected histories, and truncated windows.
 - **Ref pills** — `HEAD`, local branches, remote-tracking branches, tags. A
-  branch and the remotes pointing at the same commit read as one pill
-  (`main ⇅ origin`); when they have drifted apart, each keeps its own.
+  branch and the remotes pointing at the same commit read as one segmented pill
+  (`main │ origin`, the remotes appended inside the branch's own chip); when they
+  have drifted apart, each keeps its own. The checked-out branch is marked by a
+  ring on its pill and a small lane-coloured ring on its row, not by git's
+  `HEAD -> ` plumbing text.
 - **Fuzzy search** over subject / hash / author, with the matched characters
   highlighted, and a commits / lanes / matches readout.
 - A **commit detail panel** — full message, changed files, copy-hash, clickable

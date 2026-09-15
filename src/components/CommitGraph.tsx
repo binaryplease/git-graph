@@ -3,7 +3,7 @@ import type { GitCommit } from '../../shared/git.schema'
 import { computeGraphLayout } from '../../shared/graphLayout'
 import { fuzzyHighlight, type FuzzyHighlight } from '../../shared/fuzzy'
 import { groupRefDecorations } from '../../shared/refGroup'
-import { RefPill } from './RefPill'
+import { CheckedOutMarker, RefPill } from './RefPill'
 
 // The reusable commit-graph view: commits in, SVG + rows out. It owns no data
 // fetching and no app chrome, so it can be lifted into another host
@@ -134,14 +134,21 @@ export function CommitGraph({
         const subject = fuzzyHighlight(commit.subject, searchQuery)
         const hash = fuzzyHighlight(commit.hash, searchQuery)
         const author = fuzzyHighlight(commit.author, searchQuery)
+        // One pill per ref identity, not per decoration: a branch and the
+        // remotes pointing at the same commit are a single ref.
+        const refGroups = groupRefDecorations(commit.refs, remotes)
         return {
           commit,
           subject,
           hash,
           author,
-          // One pill per ref identity, not per decoration: a branch and the
-          // remotes pointing at the same commit are a single ref.
-          refGroups: groupRefDecorations(commit.refs, remotes),
+          refGroups,
+          // The branch HEAD is on at this commit, if any — what the row's
+          // checked-out ring names. A detached HEAD is on no branch, so it
+          // leaves the row unmarked and speaks through its own `HEAD` pill.
+          checkedOutBranch:
+            refGroups.find((refGroup) => refGroup.kind === 'branch' && refGroup.isHead)?.name ??
+            null,
           matched: subject.matched || hash.matched || author.matched,
         }
       }),
@@ -253,7 +260,7 @@ export function CommitGraph({
       <div ref={rowsContainerRef} className="relative">
         {/* One wrapper per row keeps children[row] stable for scrollIntoView even
             when the inline detail is inserted after the selected row. */}
-        {rows.map(({ commit, subject, hash, author, refGroups, matched }, row) => (
+        {rows.map(({ commit, subject, hash, author, refGroups, checkedOutBranch, matched }, row) => (
           <div key={`${commit.hash}-${row}`}>
             <button
               type="button"
@@ -266,6 +273,15 @@ export function CommitGraph({
             >
               {refGroups.length > 0 && (
                 <span className="inline-flex shrink-0 items-center gap-1.5">
+                  {/* The checked-out ring leads the row's refs, in the row and
+                      not on the SVG node — that ring marks the *selected*
+                      commit, and two rings of one shape would blur the two. */}
+                  {checkedOutBranch !== null && (
+                    <CheckedOutMarker
+                      branchName={checkedOutBranch}
+                      color={laneColor(layout.placements[row]!.lane)}
+                    />
+                  )}
                   {refGroups.map((refGroup) => (
                     <RefPill key={`${refGroup.kind}:${refGroup.name}`} group={refGroup} />
                   ))}
