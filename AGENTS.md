@@ -5,13 +5,6 @@ git repositories at a served root and renders their commit DAGs. Sibling of
 `binp-file-explorer` in shape and conventions (local-machine service-first;
 later embeddable in nightshift-ui as a module).
 
-## Project context — read `.nightshift/` first
-
-Before starting any non-trivial task, consult `.nightshift/` — the local dev
-notebook (gitignored) that is the single source of truth for plans, decisions,
-and open questions. Record session outcomes back here — append to `log.md`,
-update `backlog.md` — so the next agent inherits the context.
-
 ## Tech stack
 
 | Layer | Choice | Notes |
@@ -23,7 +16,7 @@ update `backlog.md` — so the next agent inherits the context.
 | Frontend | React 19 | |
 | Styling | Tailwind CSS v4 | `@tailwindcss/vite` plugin; palette + lane tokens in `src/theme.css` (imported by `index.css`, shared verbatim with a host via `git-graph/theme.css`, ADR-0027). Light/dark/system theme re-skins by overriding the same custom properties under `[data-theme="light"]`. |
 | Icons | `@tabler/icons-react` | ADR-0022 — never Unicode characters as icons. |
-| Diff view | `@git-diff-view/react` + `@git-diff-view/shiki` | Pinned exactly at `0.1.7` (pre-1.0). Whole-file tokenization for the diff views (inline unified in the panel, full-tab split for the standalone commit/compare tabs) — beats per-line highlighting (diff2html). First substantial third-party runtime UI dependency; ADR still open (see `.nightshift/backlog.md`). |
+| Diff view | `@git-diff-view/react` + `@git-diff-view/shiki` | Pinned exactly at `0.1.7` (pre-1.0). Whole-file tokenization for the diff views (inline unified in the panel, full-tab split for the standalone commit/compare tabs) — beats per-line highlighting (diff2html). First substantial third-party runtime UI dependency; ADR still open. |
 | Build | Vite (client) + Bun bundler (server + CLI) | client → `dist/client/`, server + `bgg` CLI → `dist/server/`. |
 | Packaging | Nix flake | `flake.nix` → the `bgg` standalone CLI + `git-graph` alias (`packages`/`apps`), a `devShell`, and a hardened `nixosModules.default` (`services.git-graph`). Mirrors binp-file-explorer's `bfe` flake. |
 | Dev env | mise | `.mise.toml` declares tool versions, env vars, and tasks (ADR-0004). |
