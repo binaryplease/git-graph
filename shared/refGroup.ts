@@ -273,8 +273,13 @@ export function refGroupLabel(group: RefGroup): RefGroupLabel {
  * the copy value going wrong again.
  */
 export function refGroupCopyValue(group: RefGroup): string {
-  // A `remote` group is only ever built with at least one remote.
-  if (group.kind === 'remote') return `${group.remotes[0]}/${group.name}`
+  // `groupRefDecorations` only ever builds a `remote` group with at least one
+  // remote, but `RefGroupSchema` defaults `remotes` to `[]`, so a host that
+  // parses `{ kind: 'remote', name }` through the schema holds a remote group
+  // with no remote to qualify by. Falling back to the bare name there hands
+  // over the only ref text the group has, never the string `undefined/name`.
+  const [firstRemote] = group.remotes
+  if (group.kind === 'remote' && firstRemote !== undefined) return `${firstRemote}/${group.name}`
   // A tag, a local branch (with or without remotes) and a detached `HEAD` all
   // resolve under their own name.
   return group.name

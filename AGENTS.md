@@ -289,7 +289,7 @@ covered too: `services/port.test.ts` (probe/walk against real binds),
 `bind-exposure.test.ts` (loopback-default / non-loopback-refusal, ADR-0037 §4),
 `cli/args.test.ts` (argv routing + flag parsing), and `scripts/dev-ports.test.ts`
 (env pinning + reassignment announcements).
-Currently 232 tests across 18 files.
+Currently 233 tests across 18 files.
 
 ## UX conventions
 

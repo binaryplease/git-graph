@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before the pills it qualifies, and a host given a loose marker to place itself is free
   to break that while still rendering both parts (ADR-0027 Rule 1). Embedders that drew
   the ring themselves render `<CommitRefRow>` instead and stop deriving which branch it
-  names. ([#6])
+  names.
 - **BREAKING** — `CommitGraph` now takes a required `remotes` prop (the repository's
   remote names, as `CommitLog.remotes`). Embedders of `git-graph/components` must pass
   it; there is no default, because an empty array has to mean "this repository has no
@@ -74,21 +74,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `refs/remotes/origin/feature`, a ref that exists nowhere. The prefix now gets no special
   handling: a decoration is remote-tracking only when it matches a reported remote name
   whole, with nothing stripped from it first. git never prints the long form for an actual
-  remote-tracking ref in `%d`/`%D`, so this only ever named a local branch. ([#6])
+  remote-tracking ref in `%d`/`%D`, so this only ever named a local branch.
 - Remote names are no longer mangled when a remote's own name contains a slash.
   `git remote add fork/alice …` is legal, and `refs/remotes/fork/alice/main` was being cut
   at its first slash into a remote `fork` and a branch `alice/main` — neither of which
   exists — so a branch tracked on such a remote never unified with it. Names now come from
   `git remote`, the only listing that knows them, filtered by `refs/remotes` so a
-  configured-but-never-fetched remote still cannot claim a same-named local branch. ([#6])
+  configured-but-never-fetched remote still cannot claim a same-named local branch.
 - A repository holding both `refs/heads/origin/main` and `refs/remotes/origin/main` no
   longer reports a remote called `remotes`. Ref shortening disambiguates the second as
   `remotes/origin/main`, and reading that short name structurally invented the bogus name
-  while dropping `origin` entirely; full `%(refname)` values have one shape. ([#6])
+  while dropping `origin` entirely; full `%(refname)` values have one shape.
 - The copy button on a ref pill always yields a ref that resolves. For a name that exists
   on several remotes and nowhere locally the pill reads `shared`, and the copy value was
   taken from that label — putting a bare `shared` on the clipboard, which git cannot look
-  up. It now copies `origin/shared`. ([#6])
+  up. It now copies `origin/shared`.
 
 [#1]: https://github.com/binaryplease/git-graph/issues/1
 [#6]: https://github.com/binaryplease/git-graph/pull/6

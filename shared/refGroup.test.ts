@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { parseRefDecorations } from './gitLog'
 import {
+  RefGroupSchema,
   classifyRefDecoration,
   groupRefDecorations,
   refGroupCopyValue,
@@ -347,6 +348,15 @@ describe('refGroupCopyValue', () => {
     expect(refGroupCopyValue(tag!)).toBe('v1.0')
     const [head] = groupRefDecorations(['HEAD'], [])
     expect(refGroupCopyValue(head!)).toBe('HEAD')
+  })
+
+  // `groupRefDecorations` never builds this shape, but `RefGroupSchema` admits
+  // it (`remotes` defaults to `[]`), so a host parsing its own groups can hold
+  // one. The bare name is the only ref text it has; `undefined/shared` is not.
+  test('a remote group the schema built with no remotes copies its bare name', () => {
+    const group = RefGroupSchema.parse({ kind: 'remote', name: 'shared' })
+    expect(group.remotes).toEqual([])
+    expect(refGroupCopyValue(group)).toBe('shared')
   })
 })
 
