@@ -69,7 +69,9 @@ Running the server directly works too: `bun server/index.ts ~/projects`, or set
 - An SVG **commit graph** with per-lane colours, hollow merge nodes, and curved
   elbow edges. The lane assignment handles octopus merges, root commits,
   disconnected histories, and truncated windows.
-- **Ref pills** — `HEAD`, local branches, remote-tracking branches, tags.
+- **Ref pills** — `HEAD`, local branches, remote-tracking branches, tags. A
+  branch and the remotes pointing at the same commit read as one pill
+  (`main ⇅ origin`); when they have drifted apart, each keeps its own.
 - **Fuzzy search** over subject / hash / author, with the matched characters
   highlighted, and a commits / lanes / matches readout.
 - A **commit detail panel** — full message, changed files, copy-hash, clickable

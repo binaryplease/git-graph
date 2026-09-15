@@ -411,6 +411,7 @@ export function App() {
           {loadError === null && hasCommits && (
             <CommitGraph
               commits={commits}
+              remotes={commitLog?.remotes}
               searchQuery={searchQuery.trim()}
               onStats={handleGraphStats}
               selectedHash={selectedCommitHash}

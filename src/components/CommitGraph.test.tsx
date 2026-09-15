@@ -45,3 +45,80 @@ describe('CommitGraph inline detail slot', () => {
     expect(screen.getByText('parent')).toBeTruthy()
   })
 })
+
+// Ref pills: one per ref identity, not one per decoration. The pills are read
+// off the DOM by class because a unified pill is several nodes (the HEAD marker,
+// the name, the synced marker) rather than one string.
+const pillsOf = (container: HTMLElement) =>
+  [...container.querySelectorAll('.ref-pill')].map((pill) => ({
+    text: pill.textContent ?? '',
+    className: pill.className,
+  }))
+
+describe('CommitGraph ref pills', () => {
+  test('a branch and its remote on one commit render a single pill', () => {
+    const { container } = render(
+      <CommitGraph
+        commits={[commit({ refs: ['HEAD -> main', 'origin/main'] })]}
+        remotes={['origin']}
+      />,
+    )
+    const pills = pillsOf(container)
+    expect(pills).toHaveLength(1)
+    // The HEAD marker survives, the name is said once, and the remote is named.
+    expect(pills[0]!.text).toBe('HEAD -> main origin')
+    expect(pills[0]!.className).toContain('ref-head')
+    expect(container.querySelector('.ref-synced')).toBeTruthy()
+  })
+
+  test('several remotes tracking the same name collapse into that pill', () => {
+    const { container } = render(
+      <CommitGraph
+        commits={[commit({ refs: ['HEAD -> main', 'origin/main', 'upstream/main'] })]}
+        remotes={['origin', 'upstream']}
+      />,
+    )
+    const pills = pillsOf(container)
+    expect(pills).toHaveLength(1)
+    expect(pills[0]!.text).toContain('origin, upstream')
+  })
+
+  test('a branch and its remote on different commits keep distinct pills', () => {
+    const { container } = render(
+      <CommitGraph
+        commits={[
+          commit({ hash: 'aaa1111', refs: ['HEAD -> main'], parents: ['bbb2222'] }),
+          commit({ hash: 'bbb2222', refs: ['origin/main'] }),
+        ]}
+        remotes={['origin']}
+      />,
+    )
+    const pills = pillsOf(container)
+    expect(pills.map((pill) => pill.text)).toEqual(['HEAD -> main', 'origin/main'])
+    // Neither row claims a sync it cannot see.
+    expect(container.querySelector('.ref-synced')).toBeNull()
+  })
+
+  test('a remote-only branch renders as the remote ref it is', () => {
+    const { container } = render(
+      <CommitGraph commits={[commit({ refs: ['origin/feature'] })]} remotes={['origin']} />,
+    )
+    const pills = pillsOf(container)
+    expect(pills).toHaveLength(1)
+    expect(pills[0]!.text).toBe('origin/feature')
+    expect(pills[0]!.className).toContain('ref-remote')
+  })
+
+  test('a tag is never folded into the branch pill', () => {
+    const { container } = render(
+      <CommitGraph
+        commits={[commit({ refs: ['HEAD -> v1.0', 'origin/v1.0', 'tag: v1.0'] })]}
+        remotes={['origin']}
+      />,
+    )
+    const pills = pillsOf(container)
+    expect(pills).toHaveLength(2)
+    expect(pills[1]!.text).toBe('v1.0')
+    expect(pills[1]!.className).toContain('ref-tag')
+  })
+})

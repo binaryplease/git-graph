@@ -24,6 +24,7 @@ const commitDetail: CommitDetail = {
   fullHash: 'abc1234000000000000000000000000000000000',
   parents: [],
   refs: [],
+  remotes: [],
   author: 'Test',
   authorEmail: 'test@example.invalid',
   authorDate: '2026-07-20T10:00:00+02:00',
@@ -341,5 +342,51 @@ describe('CommitDetailPanel full-commit and compare affordances', () => {
     expect(screen.queryByRole('button', { name: /compare v1\.0 against/i })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /compare feature against the default branch/i }))
     expect(compared).toEqual(['feature'])
+  })
+})
+
+// The panel is the second surface that renders ref pills, and it groups them
+// from the same shared function the graph rows use — the detail payload carries
+// the repository's remote names for exactly this.
+describe('CommitDetailPanel ref pills', () => {
+  const pillTexts = () =>
+    [...document.querySelectorAll('.ref-pill')].map((pill) => pill.textContent ?? '')
+
+  test('a branch and its remotes on this commit render one pill naming each remote', () => {
+    renderPanel({
+      detail: {
+        ...commitDetail,
+        refs: ['HEAD -> main', 'origin/main', 'upstream/main', 'tag: v1.0'],
+        remotes: ['origin', 'upstream'],
+      },
+    })
+    expect(pillTexts()).toEqual(['HEAD -> main origin, upstream', 'v1.0'])
+  })
+
+  test('the unified pill keeps the compare affordance, once, under the bare branch name', () => {
+    renderPanel({
+      detail: {
+        ...commitDetail,
+        refs: ['HEAD -> feature', 'origin/feature'],
+        remotes: ['origin'],
+      },
+    })
+    expect(pillTexts()).toEqual(['HEAD -> feature origin'])
+    const compareLinks = screen.getAllByRole('link', {
+      name: /compare feature against the default branch/i,
+    }) as HTMLAnchorElement[]
+    expect(compareLinks).toHaveLength(1)
+    expect(compareLinks[0]!.getAttribute('href')).toBe('/compare?repo=demo&head=feature')
+  })
+
+  test('a diverged remote keeps its own pill and is not comparable', () => {
+    renderPanel({
+      detail: { ...commitDetail, refs: ['origin/feature'], remotes: ['origin'] },
+    })
+    expect(pillTexts()).toEqual(['origin/feature'])
+    expect(screen.queryByRole('link', { name: /compare .* against the default branch/i })).toBeNull()
+    // The copy control stays on the pill (ADR-0025) and offers the ref as it is
+    // shown, remote and all.
+    expect(screen.getByRole('button', { name: /ref name/i })).toBeTruthy()
   })
 })

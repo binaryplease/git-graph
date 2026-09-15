@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import type { GitCommit } from '../../shared/git.schema'
 import { computeGraphLayout } from '../../shared/graphLayout'
 import { fuzzyHighlight, type FuzzyHighlight } from '../../shared/fuzzy'
+import { groupRefDecorations } from '../../shared/refGroup'
 import { RefPill } from './RefPill'
 
 // The reusable commit-graph view: commits in, SVG + rows out. It owns no data
@@ -83,9 +84,20 @@ export type CommitGraphStats = {
   matchCount: number | null
 }
 
+// A stable empty default, so a host that passes no remote names does not
+// invalidate the row memo on every render with a fresh array literal.
+const NO_REMOTES: string[] = []
+
 export type CommitGraphProps = {
   /** Commits in topological order (children before all of their parents). */
   commits: GitCommit[]
+  /**
+   * The repository's remote names (`CommitLog.remotes`). Ref decorations are
+   * grouped against them, so a branch and the remotes that agree with it render
+   * as one pill. Omitted, decorations still group but remote-tracking refs are
+   * only recognised under git's default remote name.
+   */
+  remotes?: string[]
   /** Fuzzy search query; matching rows highlight, the rest dim. */
   searchQuery?: string
   /** Reports derived numbers for host chrome (readouts). Pass a stable callback. */
@@ -106,6 +118,7 @@ export type CommitGraphProps = {
 
 export function CommitGraph({
   commits,
+  remotes = NO_REMOTES,
   searchQuery = '',
   onStats,
   selectedHash = null,
@@ -126,10 +139,13 @@ export function CommitGraph({
           subject,
           hash,
           author,
+          // One pill per ref identity, not per decoration: a branch and the
+          // remotes pointing at the same commit are a single ref.
+          refGroups: groupRefDecorations(commit.refs, remotes),
           matched: subject.matched || hash.matched || author.matched,
         }
       }),
-    [commits, searchQuery],
+    [commits, remotes, searchQuery],
   )
 
   const matchCount = searchQuery
@@ -237,7 +253,7 @@ export function CommitGraph({
       <div ref={rowsContainerRef} className="relative">
         {/* One wrapper per row keeps children[row] stable for scrollIntoView even
             when the inline detail is inserted after the selected row. */}
-        {rows.map(({ commit, subject, hash, author, matched }, row) => (
+        {rows.map(({ commit, subject, hash, author, refGroups, matched }, row) => (
           <div key={`${commit.hash}-${row}`}>
             <button
               type="button"
@@ -248,10 +264,10 @@ export function CommitGraph({
               style={{ height: ROW_HEIGHT, paddingLeft: graphContentLeft(layout.laneCount) }}
               onClick={() => onSelectCommit?.(commit)}
             >
-              {commit.refs.length > 0 && (
-                <span className="inline-flex shrink-0 gap-1.5">
-                  {commit.refs.map((refDecoration) => (
-                    <RefPill key={refDecoration} refDecoration={refDecoration} />
+              {refGroups.length > 0 && (
+                <span className="inline-flex shrink-0 items-center gap-1.5">
+                  {refGroups.map((refGroup) => (
+                    <RefPill key={`${refGroup.kind}:${refGroup.name}`} group={refGroup} />
                   ))}
                 </span>
               )}

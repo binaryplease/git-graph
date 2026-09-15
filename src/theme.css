@@ -112,14 +112,34 @@ mark {
   padding: 0 1px;
 }
 
-/* Ref decoration pills. One base class + a kind class per git ref flavour. */
+/* Ref decoration pills. One base class + a kind class per git ref flavour.
+   A pill is a flex line so the synced marker's vector icon sits on the text's
+   centre line instead of hanging off the baseline. */
 .ref-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.5;
   padding: 1px 7px;
   border-radius: 999px;
   border: 1px solid transparent;
+  white-space: nowrap;
+}
+/* git's own `HEAD ->` decoration, kept as the quieter half of the pill so the
+   branch name stays the thing you read first. */
+.ref-head-marker {
+  opacity: 0.7;
+}
+/* The synced marker of a unified pill — `main ⇅ origin`: this branch and the
+   named remotes decorate the same commit. Subdued for the same reason: the
+   branch name is the subject, the remotes are the annotation. */
+.ref-synced {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0.8;
 }
 .ref-head {
   background: #1f6feb33;

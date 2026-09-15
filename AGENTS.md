@@ -62,6 +62,17 @@ consumers (standalone instance · shared package · nightshift-ui module):
     updating the regression fixture in `graphLayout.test.ts`, which pins the
     prototype-captured output.
   - `gitLog.ts` — `git log` wire format + parser (unit separator `%x1f`).
+  - `refGroup.ts` — folds a commit's `%d` decorations into one group per *ref
+    identity*, so a local branch and the remotes pointing at the same commit
+    render as one pill (`main ⇅ origin`) instead of one pill per decoration.
+    Classification takes the repository's own remote names (`CommitLog.remotes`
+    / `CommitDetail.remotes`) rather than guessing an `origin/` prefix, which is
+    what tells the remote-tracking ref `fork/main` from a local `feature/main`.
+    Grouping only ever sees one commit's decorations, so a diverged branch and
+    remote keep separate pills and no "synced" claim can be invented; ahead/
+    behind counts would need `%(upstream:track)` and are deliberately absent
+    (the shape leaves room for them per ADR-0029). Also owns the pill's display
+    parts (`refGroupLabel`, `refGroupTitle`) so both surfaces and a host agree.
   - `commitDetail.ts` — `git show` wire format + parser for a single commit
     (header + `--raw`/`--numstat` file block, zipped positionally). Merges use
     `-m --first-parent`.
@@ -84,6 +95,11 @@ consumers (standalone instance · shared package · nightshift-ui module):
   against git's own listings before it reaches the shell — repository
   identifiers against the repo listing, file paths against a commit's/
   comparison's own file list, and branch refs against `git for-each-ref`.
+  The log and the commit detail each also carry `remotes` — the repository's
+  remote names, read from its own `refs/remotes` with `for-each-ref` (only a
+  remote with refs can appear in a decoration) and returned alongside the refs
+  that need them, so the ref pills never guess at an `origin/` prefix and the
+  standalone commit tab needs no extra fetch to group them.
   Beyond the log/detail/file-diff routes it serves `GET /api/git/branches`
   (with default-branch resolution), `/api/git/compare` (branch-vs-base file
   list), `/api/git/compare/diff` (one file of a comparison), and
@@ -116,7 +132,9 @@ consumers (standalone instance · shared package · nightshift-ui module):
   out), `CommitDetailPanel.tsx` (changed files, copy-hash, parent navigation),
   `FileDiff.tsx` (one diff, unified or split by prop), `MultiFileDiffView.tsx`
   (file list on top + per-file diffs loaded lazily as each nears the viewport),
-  `UncommittedChangesRow.tsx` (the working-tree node above HEAD), plus shared
+  `UncommittedChangesRow.tsx` (the working-tree node above HEAD),
+  `RefPill.tsx` (one grouped ref — see `shared/refGroup.ts` — as a badge, the
+  same one both the graph rows and the detail panel render), plus shared
   tokens in `components/fileStatus.tsx` and chrome in `DiffTabFrame.tsx`. The
   shells (`App.tsx` and the four pages) own all fetching; `lib/diffRoutes.ts` is
   the single descriptor for the diff-tab URLs (ADR-0026) that the panel builds
@@ -141,7 +159,8 @@ consumers (standalone instance · shared package · nightshift-ui module):
     the SVG for rows below the expansion; the layout algorithm is untouched.
 
 The render layer is importable by subpath — `package.json` `exports` maps
-`./components` (the fetch-free components), `./shared` (schema + layout + fuzzy),
+`./components` (the fetch-free components, ref pill included), `./shared`
+(schema + layout + ref grouping + fuzzy),
 `./highlighter` (`lib/highlighter.ts`), and `./theme.css`, so nightshift-ui can
 source-alias them (no proxy, no forked copy).
 
@@ -165,23 +184,39 @@ resolution and three-dot branch comparison (an unmerged fixture branch, since a
 merged one correctly compares empty), plus the working tree (a `dirty-repo`
 fixture with a modified, a deleted, an untracked text, and an untracked binary
 file — list, clean, and per-file diffs including the `--no-index` untracked case
-and the untracked-binary notice). The `git show`/`git diff` parsers
+and the untracked-binary notice), plus the remote names the ref pills classify
+against (a `remotes-repo` fixture whose remote-tracking refs are written with
+`update-ref`: `main` in sync with two remotes, one remote-only branch, one
+local-only branch, grouped end to end from real decorations). The `git show`/`git diff` parsers
 (`commitDetail.ts`, `fileDiff.ts`) and the route membership guards — path *and*
 ref — are covered too, and client components have DOM tests (`bunfig.toml`
 preloads happy-dom via `src/test/setup.ts`), including `MultiFileDiffView`'s
 lazy load behind a stubbed IntersectionObserver, `CommitGraph`'s inline
 `selectedDetail` slot, `UncommittedChangesRow`'s clean state and its two open
-seams (link vs in-app handler), and `detailLayout`'s schema default/fallback (ADR-0029). The standalone surface is
+seams (link vs in-app handler), and `detailLayout`'s schema default/fallback (ADR-0029).
+Ref grouping is covered on all three levels: `shared/refGroup.test.ts` for the
+pure classifier and folding (synced branch, several remotes, diverged
+branch/remote, remote-only, tag never folded, detached HEAD, slash-named
+remotes), then the same cases as pills on *both* rendering surfaces
+(`CommitGraph`'s rows and `CommitDetailPanel`'s refs row, where the unified pill
+must still offer exactly one compare affordance). The standalone surface is
 covered too: `services/port.test.ts` (probe/walk against real binds),
 `listen.test.ts` (`strict|auto` strategy, announced skips, span exhaustion),
 `bind-exposure.test.ts` (loopback-default / non-loopback-refusal, ADR-0037 §4),
 `cli/args.test.ts` (argv routing + flag parsing), and `scripts/dev-ports.test.ts`
 (env pinning + reassignment announcements).
-Currently 170 tests across 16 files.
+Currently 204 tests across 17 files.
 
 ## UX conventions
 
 - ADR-0019: fuzzy matches highlight the matched characters (`<mark>`).
+- Ref pills: one pill per ref *identity*, not per `%d` decoration. A branch that
+  agrees with its remotes names itself once and marks them — `main ⇅ origin`,
+  the marker a Tabler vector per ADR-0022 — keeping the `HEAD ->` marker and the
+  head colour when it is checked out. Pills only ever merge refs on the same
+  commit, so a diverged branch and remote stay two legible pills; the tooltip
+  always names the refs that went in, because a merged badge is a claim the
+  reader has to be able to check.
 - ADR-0025: disabled controls stay visible and explain themselves (`title`/placeholder).
 - ADR-0016: no third-party runtime assets — everything is bundled.
 - ADR-0022: Tabler vectors, never emoji.
