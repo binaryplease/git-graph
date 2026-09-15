@@ -60,14 +60,6 @@ export type RefGroup = z.infer<typeof RefGroupSchema>
 // pointed at by HEAD.
 const TAG_PREFIX = /^tag:\s*/
 const HEAD_POINTER = /^HEAD\s*->\s*/
-// git's ref *shortening* (`%(refname:short)`, `git branch` output) prints a
-// remote-tracking ref long — `remotes/origin/main` — when a local branch of the
-// same name would make the short form ambiguous. `%d`/`%D` do not disambiguate
-// (they print `origin/main` twice), so this form does not arrive from the commit
-// log; it is recognised because the same grouping runs over ref listings that do
-// shorten. Either way it only counts as remote when what follows names a remote
-// git itself reported — `remotes/` is a naming convention, not a proof.
-const REMOTES_PREFIX = 'remotes/'
 
 /**
  * Which of `remoteNames` a short remote-tracking ref belongs to, or null when
@@ -78,12 +70,14 @@ const REMOTES_PREFIX = 'remotes/'
  * that knows a multi-segment name; `refs/remotes/fork/alice/main` alone cannot
  * be re-split into one.
  *
- * `remoteNames` is the repository's own list and there is no fallback guess
- * anywhere in this module: an empty list is git's authoritative answer that the
- * repository has no remote-tracking refs, so a decoration that merely *looks*
- * like `origin/<something>` — or like `remotes/<something>/<something>` — is a
- * local branch there, and claiming otherwise would invent a remote, and then a
- * sync with it, that does not exist.
+ * `remoteNames` is the repository's own list, and matching the decoration
+ * **whole** against it is the module's only test for "remote-tracking" — there
+ * is no second path and no guess anywhere, so an empty list is git's
+ * authoritative answer that the repository has no remote-tracking refs. A
+ * decoration that merely *looks* remote is a local branch: `origin/main` where
+ * `origin` is not a remote, and `remotes/origin/feature` in any repository at
+ * all, since no prefix is stripped before matching. Claiming otherwise would
+ * invent a remote, and then a sync with it, that does not exist.
  */
 function matchRemoteName(shortRef: string, remoteNames: readonly string[]): string | null {
   let longestMatch: string | null = null
@@ -139,22 +133,19 @@ export function classifyRefDecoration(
   // HEAD marker and let it collect remotes it has nothing to do with.
   if (isHead) return { kind: 'branch', name: pointee, isHead: true }
 
-  if (pointee.startsWith(REMOTES_PREFIX)) {
-    const shortRef = pointee.slice(REMOTES_PREFIX.length)
-    // Only a configured remote makes this remote-tracking. Reading the leading
-    // segment as the remote instead would be the fallback guess this module
-    // says it does not make: in a repository with no remotes, the local branch
-    // `remotes/foo/bar` (git accepts the name, and prints it exactly like this)
-    // would be read as `foo`'s branch `bar`, and a sibling local branch `bar`
-    // would then fold it in and claim a sync with `foo/bar` — a ref that exists
-    // nowhere. Falling through hands the whole name to the branch case below,
-    // which is what it is.
-    const remoteName = matchRemoteName(shortRef, remoteNames)
-    if (remoteName !== null) {
-      return { kind: 'remote', name: shortRef.slice(remoteName.length + 1), remote: remoteName }
-    }
-  }
-
+  // A `remotes/…` decoration gets **no** special handling, and that is the whole
+  // rule rather than an omission. git shortens a remote-tracking ref to
+  // `origin/main` in `%d`/`%D` and does not disambiguate there — a repository
+  // holding both `refs/heads/origin/main` and `refs/remotes/origin/main` prints
+  // `origin/main` twice — so the long form never names a remote-tracking ref in
+  // the only input this module receives. What it does name is a local branch
+  // someone called `remotes/origin/feature`, which git accepts. Stripping the
+  // prefix first and matching the rest was the last surviving guess: it read
+  // that branch as `origin`'s `feature`, folded it into a sibling local
+  // `feature`, and claimed a sync with `refs/remotes/origin/feature` — a ref
+  // that exists nowhere. Matching the name whole is what tells the two apart,
+  // and a remote genuinely called `remotes` still classifies here, by being in
+  // `remoteNames` like every other remote.
   const remoteName = matchRemoteName(pointee, remoteNames)
   if (remoteName !== null) {
     return { kind: 'remote', name: pointee.slice(remoteName.length + 1), remote: remoteName }

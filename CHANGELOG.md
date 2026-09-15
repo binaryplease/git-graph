@@ -46,12 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   remote onto an unrelated branch's pill. Ref decorations are split on `", "`, which cannot
   occur inside a ref name. ([#6])
 - A ref pill no longer forges a remote out of the long `remotes/…` decoration form. The
-  `remotes/` prefix was trusted as proof that what followed named a remote, so in a
-  repository with no remotes at all the perfectly legal local branch `remotes/foo/bar` was
-  read as `foo`'s branch `bar` — and a sibling branch `bar` folded it in and claimed to be
-  in sync with `foo/bar`, a ref that exists nowhere. The long form is now remote-tracking
-  only when what follows names a remote git itself reported, which is the rule the short
-  form already followed. ([#6])
+  `remotes/` prefix was treated as evidence about what followed it, so the perfectly legal
+  local branch `remotes/origin/feature` was read as `origin`'s branch `feature` — and a
+  sibling branch `feature` folded it in and claimed to be in sync with
+  `refs/remotes/origin/feature`, a ref that exists nowhere. The prefix now gets no special
+  handling: a decoration is remote-tracking only when it matches a reported remote name
+  whole, with nothing stripped from it first. git never prints the long form for an actual
+  remote-tracking ref in `%d`/`%D`, so this only ever named a local branch. ([#6])
 - Remote names are no longer mangled when a remote's own name contains a slash.
   `git remote add fork/alice …` is legal, and `refs/remotes/fork/alice/main` was being cut
   at its first slash into a remote `fork` and a branch `alice/main` — neither of which

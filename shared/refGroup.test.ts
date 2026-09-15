@@ -55,29 +55,43 @@ describe('classifyRefDecoration', () => {
     })
   })
 
-  test('the long `remotes/` form is the same ref as the short one', () => {
-    expect(classifyRefDecoration('remotes/upstream/main', ['upstream'])).toEqual({
-      kind: 'remote',
-      name: 'main',
-      remote: 'upstream',
-    })
-  })
-
-  // Regression: the `remotes/` prefix is a naming convention, not a proof, and
-  // it used to be trusted as one — the leading segment was read as the remote
-  // whenever no configured name matched. git accepts `git branch
-  // remotes/foo/bar` and prints that branch as exactly `remotes/foo/bar`, so in
-  // a repository with no remotes the branch was read as `foo`'s `bar`. The
-  // grouping below is where that turned into the forbidden claim: the sibling
-  // local branch `bar` folded it in and the tooltip asserted a sync with
-  // `foo/bar`, a ref that exists nowhere. The short form was already protected;
-  // the long one must obey the same contract.
-  test('no remotes means no remote for the long form either', () => {
+  // Regression: a `remotes/…` decoration never names a remote-tracking ref, so
+  // the prefix gets no special handling. git shortens remote-tracking refs to
+  // `origin/main` in `%d`/`%D` and does not disambiguate there (a repository
+  // holding both `refs/heads/origin/main` and `refs/remotes/origin/main` prints
+  // `origin/main` twice), so the long form only ever arrives as the name of a
+  // local branch someone created — `git branch remotes/origin/feature` is
+  // accepted and prints as exactly that.
+  //
+  // Two guesses have been removed here in turn. The first read the leading
+  // segment as the remote when nothing matched. The second survived it: the
+  // prefix was still *stripped* before matching, so with `origin` configured
+  // this branch was read as `origin`'s `feature` — and a sibling local
+  // `feature` folded it in and claimed a sync with `refs/remotes/origin/feature`,
+  // a ref that exists nowhere. Matching the decoration whole is what tells a
+  // local branch from a remote-tracking ref.
+  test('a `remotes/` decoration is a local branch, whatever the remotes are', () => {
+    // No remotes at all.
     expect(classifyRefDecoration('remotes/foo/bar', [])).toEqual({
       kind: 'branch',
       name: 'remotes/foo/bar',
       isHead: false,
     })
+    // The leading segment is not a remote.
+    expect(classifyRefDecoration('remotes/foo/bar', ['origin'])).toEqual({
+      kind: 'branch',
+      name: 'remotes/foo/bar',
+      isHead: false,
+    })
+    // The leading segment *is* a remote — the case the strip used to forge.
+    expect(classifyRefDecoration('remotes/origin/feature', ['origin'])).toEqual({
+      kind: 'branch',
+      name: 'remotes/origin/feature',
+      isHead: false,
+    })
+  })
+
+  test('no remotes means no remote for the long form either', () => {
     const groups = groupRefDecorations(['bar', 'remotes/foo/bar'], [])
     expect(groups.map((group) => [group.kind, group.name, group.remotes])).toEqual([
       ['branch', 'bar', []],
@@ -87,19 +101,26 @@ describe('classifyRefDecoration', () => {
     expect(groups.map(refGroupTitle).some((title) => title.includes('in sync'))).toBe(false)
   })
 
-  test('the long form is remote only when what follows names a configured remote', () => {
-    // `origin` is a remote here, `foo` is not — so one is folded and the other
-    // stays the branch name git printed.
-    expect(classifyRefDecoration('remotes/foo/bar', ['origin'])).toEqual({
-      kind: 'branch',
-      name: 'remotes/foo/bar',
-      isHead: false,
-    })
-    expect(classifyRefDecoration('remotes/origin/bar', ['origin'])).toEqual({
-      kind: 'remote',
-      name: 'bar',
-      remote: 'origin',
-    })
+  // The failure reproduced against real git: remote `origin` is fetched, and the
+  // local branches `feature` and `remotes/origin/feature` sit on one commit.
+  // `refs/remotes/origin/feature` does not exist, so nothing here may say it
+  // does.
+  test('a local branch named remotes/<remote>/<x> never forges a sync onto its namesake', () => {
+    const groups = groupRefDecorations(
+      ['HEAD -> main', 'origin/main', 'remotes/origin/feature', 'feature'],
+      ['origin'],
+    )
+    expect(groups.map((group) => [group.kind, group.name, group.remotes])).toEqual([
+      // `main` really is in sync with `origin/main` — that claim is git's.
+      ['branch', 'main', ['origin']],
+      ['branch', 'remotes/origin/feature', []],
+      ['branch', 'feature', []],
+    ])
+    const featureGroup = groups[2]!
+    expect(refGroupLabel(featureGroup).markerRemotes).toEqual([])
+    expect(refGroupTitle(featureGroup)).toBe(
+      'local branch feature — no remote-tracking ref at this commit',
+    )
   })
 
   // Regression: an empty remote list is git's authoritative "this repository has
@@ -231,12 +252,15 @@ describe('groupRefDecorations', () => {
     expect(groups[0]!.remotes).toEqual(['origin'])
   })
 
+  // The dedup guard in its own right. This used to be exercised with
+  // `remotes/origin/main` as the repeat, which stopped being a second reading of
+  // `origin/main` once the `remotes/` strip was removed — it is a local branch
+  // of its own name now, and would have left the guard untested.
   test('a repeated remote is only counted once', () => {
-    const groups = groupRefDecorations(
-      ['main', 'origin/main', 'remotes/origin/main'],
-      ['origin'],
-    )
+    const groups = groupRefDecorations(['main', 'origin/main', 'origin/main'], ['origin'])
+    expect(groups).toHaveLength(1)
     expect(groups[0]!.remotes).toEqual(['origin'])
+    expect(groups[0]!.decorations).toEqual(['main', 'origin/main', 'origin/main'])
   })
 
   test('undecorated commits yield no groups', () => {

@@ -78,13 +78,19 @@ consumers (standalone instance · shared package · nightshift-ui module):
     prop) with no fallback *anywhere in the module*: an empty list is git's
     authoritative "no remotes here", so `origin/main` in such a repository is a
     local branch someone named that way, and guessing otherwise would claim a
-    sync with a ref that does not exist. That holds for the long
-    `remotes/origin/main` form too — the `remotes/` prefix is a naming
-    convention, not a proof, and reading its leading segment as the remote was
-    the one fallback that survived the first pass: `git branch remotes/foo/bar`
-    is a legal local branch, prints as exactly that, and used to be folded into a
-    sibling `bar` as a remote it agrees with. A decoration is remote-tracking
-    only when what follows a remote's name is a name git itself reported.
+    sync with a ref that does not exist. A decoration is remote-tracking only
+    when it matches a reported remote name **whole**; nothing is stripped from it
+    first. That is what settles the long `remotes/…` form, which gets no special
+    handling at all: git shortens remote-tracking refs to `origin/main` in
+    `%d`/`%D` and does not disambiguate there (a repository holding both
+    `refs/heads/origin/main` and `refs/remotes/origin/main` prints `origin/main`
+    twice), so `remotes/origin/feature` in a decoration is always a local branch
+    someone created — `git branch remotes/origin/feature` is accepted and prints
+    as exactly that. Two guesses were removed here in turn: reading the leading
+    segment as the remote, and then merely *stripping* the prefix before matching,
+    which read that branch as `origin`'s `feature` and let a sibling local
+    `feature` claim a sync with a `refs/remotes/origin/feature` that exists
+    nowhere.
     `HEAD -> x` likewise settles a case the short `%d` form cannot — HEAD
     is only ever on a local branch, so a checked-out `origin/other` is local.
     Names are matched **longest-first**, because a remote name may itself contain
@@ -251,8 +257,10 @@ Ref grouping is covered on all three levels: `shared/refGroup.test.ts` for the
 pure classifier and folding (synced branch, several remotes, diverged
 branch/remote, remote-only, tag never folded, detached HEAD, slash-named
 remotes, a no-remotes repository whose local `origin/main` must not read as
-remote-tracking — and, for the same contract, whose local `remotes/foo/bar` must
-not either — a checked-out branch named like a remote ref, and a
+remote-tracking, a `remotes/…`-named local branch that must read as a branch
+whatever the remotes are — including the case where its second segment *is* a
+real remote, which is where the last stripping guess forged a sync onto a
+sibling `feature` — a checked-out branch named like a remote ref, and a
 comma-bearing tag name that must not forge a remote onto another branch), plus
 `refGroupCopyValue`, whose job is that what reaches the clipboard always
 resolves even where the pill's label is unqualified. Then
