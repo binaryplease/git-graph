@@ -145,41 +145,62 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
   }
 
   /**
-   * The repository's remote names, derived from its own remote-tracking refs.
+   * The repository's remote names: every configured remote that actually has
+   * remote-tracking refs. This is what the ref pills classify decorations
+   * against instead of guessing at an `origin/` prefix — remote names are
+   * arbitrary, so only git's own listings tell the remote-tracking ref
+   * `fork/main` from a local branch named `feature/main`.
    *
-   * This is what the ref pills need to group a local branch with the remotes
-   * that agree with it, and it is read from `git for-each-ref refs/remotes`
-   * rather than guessed from an `origin/` prefix: remote names are arbitrary, so
-   * only git's own listing distinguishes the remote-tracking ref `fork/main`
-   * from a local branch named `feature/main`. Reading the *refs* (not
-   * `git remote`) is deliberate — only a remote with refs can ever appear in a
-   * decoration, so this list covers exactly the names that need classifying.
+   * It takes **both** listings because each answers half of it, and neither
+   * half can be recovered from the other:
    *
-   * There is no fallback on the read side either: an empty list is git's
-   * authoritative "no remote-tracking refs here", and the client classifies
-   * against it as such. So a failure here is not fatal but it is not free — the
-   * graph still renders, with every decoration read as a local branch under the
-   * qualified name git printed (`origin/main` as a branch called that), which is
-   * the pre-grouping rendering. It errs toward claiming no sync, never toward
-   * claiming one that does not exist.
+   * - `git remote` is the only authority on what a remote is *called*. A remote
+   *   name may contain a slash (`git remote add fork/alice …` is accepted), and
+   *   `refs/remotes/fork/alice/main` cannot be re-split into the remote
+   *   `fork/alice` and the branch `main` without being told the name — splitting
+   *   at the first slash invents a remote called `fork` and a branch called
+   *   `alice/main`, neither of which exists. The client matches these names
+   *   longest-first for exactly this reason.
+   * - `refs/remotes` is what keeps a *configured but never fetched* remote out
+   *   of the list. Only a remote with refs can appear in a decoration, so a
+   *   bare `git remote` read would let a configured-but-empty remote `foo`
+   *   claim the local branch `foo/bar` as its own.
+   *
+   * The refs are read as full `%(refname)`, not `%(refname:short)`: shortening
+   * is ambiguity-sensitive, so a repository holding both `refs/heads/origin/main`
+   * and `refs/remotes/origin/main` prints the latter as `remotes/origin/main` —
+   * whereupon a structural read of the short name reports a remote named
+   * `remotes` and loses `origin` entirely. Full refnames have one shape.
+   *
+   * There is no fallback: an empty list is git's authoritative "no remotes with
+   * refs here", and the client classifies against it as such. So a failure here
+   * is not fatal but it is not free — the graph still renders, with every
+   * decoration read as a local branch under the qualified name git printed
+   * (`origin/main` as a branch called that), which is the pre-grouping
+   * rendering. It errs toward claiming no sync, never toward claiming one that
+   * does not exist.
    */
   async function readRemoteNames(repositoryPath: string): Promise<string[]> {
-    const { stdout, exitCode } = await runGit(repositoryPath, [
-      'for-each-ref',
-      '--format=%(refname:short)',
-      'refs/remotes',
+    const [configured, trackingRefs] = await Promise.all([
+      runGit(repositoryPath, ['remote']),
+      runGit(repositoryPath, ['for-each-ref', '--format=%(refname)', 'refs/remotes']),
     ])
-    if (exitCode !== 0) return []
+    if (configured.exitCode !== 0 || trackingRefs.exitCode !== 0) return []
 
-    const remoteNames = new Set<string>()
-    for (const line of stdout.split('\n')) {
-      const shortRef = line.trim()
-      if (!shortRef) continue
-      const separatorIndex = shortRef.indexOf('/')
-      if (separatorIndex <= 0 || separatorIndex === shortRef.length - 1) continue
-      remoteNames.add(shortRef.slice(0, separatorIndex))
-    }
-    return [...remoteNames].sort((first, second) => first.localeCompare(second))
+    const trackingRefNames = trackingRefs.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+
+    const remoteNames = configured.stdout
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((remoteName) =>
+        trackingRefNames.some((refName) => refName.startsWith(`refs/remotes/${remoteName}/`)),
+      )
+
+    return remoteNames.sort((first, second) => first.localeCompare(second))
   }
 
   /**

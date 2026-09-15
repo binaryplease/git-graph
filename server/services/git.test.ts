@@ -93,6 +93,32 @@ beforeAll(() => {
   runGit(remotesRepositoryPath, 'update-ref', 'refs/remotes/upstream/main', 'main')
   runGit(remotesRepositoryPath, 'update-ref', 'refs/remotes/origin/published', 'main')
 
+  // The two shapes that break a structural read of `refs/remotes`, which is why
+  // the remote names are read from `git remote` and only *filtered* by the refs:
+  //
+  //   - `fork/alice` is a remote whose own name contains a slash (git accepts
+  //     it). `refs/remotes/fork/alice/main` cannot be split back into that
+  //     remote and the branch `main` without being told the name.
+  //   - `unfetched` is configured but has no refs, so it can never appear in a
+  //     decoration and must not be offered as a name to classify against.
+  const slashRemoteRepositoryPath = join(scratchRoot, 'slash-remote-repo')
+  runGit(scratchRoot, 'init', '-b', 'main', slashRemoteRepositoryPath)
+  runGit(slashRemoteRepositoryPath, 'commit', '--allow-empty', '-m', 'shared commit')
+  runGit(slashRemoteRepositoryPath, 'remote', 'add', 'fork/alice', 'https://example.invalid/a.git')
+  runGit(slashRemoteRepositoryPath, 'remote', 'add', 'unfetched', 'https://example.invalid/u.git')
+  runGit(slashRemoteRepositoryPath, 'update-ref', 'refs/remotes/fork/alice/main', 'main')
+
+  // A repository where a local branch collides with a remote-tracking ref of the
+  // same name. git's ref *shortening* disambiguates the remote one as
+  // `remotes/origin/main`, so reading `%(refname:short)` structurally reported a
+  // remote named `remotes` and lost `origin` altogether.
+  const ambiguousRemoteRepositoryPath = join(scratchRoot, 'ambiguous-remote-repo')
+  runGit(scratchRoot, 'init', '-b', 'main', ambiguousRemoteRepositoryPath)
+  runGit(ambiguousRemoteRepositoryPath, 'commit', '--allow-empty', '-m', 'shared commit')
+  runGit(ambiguousRemoteRepositoryPath, 'remote', 'add', 'origin', 'https://example.invalid/r.git')
+  runGit(ambiguousRemoteRepositoryPath, 'update-ref', 'refs/remotes/origin/main', 'main')
+  runGit(ambiguousRemoteRepositoryPath, 'branch', 'origin/main')
+
   // A repository with a dirty working tree, for the uncommitted-changes tests: a
   // committed base, then a modification, a deletion, and an untracked file left
   // uncommitted.
@@ -125,11 +151,13 @@ describe('createGitService', () => {
     const { rootPath, repositories } = await service.listRepositories()
     expect(rootPath).toBe(scratchRoot)
     expect(repositories).toEqual([
+      { name: 'ambiguous-remote-repo', relativePath: 'ambiguous-remote-repo' },
       { name: 'dirty-repo', relativePath: 'dirty-repo' },
       { name: 'empty-repo', relativePath: 'empty-repo' },
       { name: 'files-repo', relativePath: 'files-repo' },
       { name: 'remotes-repo', relativePath: 'remotes-repo' },
       { name: 'sample-repo', relativePath: 'sample-repo' },
+      { name: 'slash-remote-repo', relativePath: 'slash-remote-repo' },
     ])
   })
 
@@ -229,6 +257,40 @@ describe('createGitService', () => {
     expect(described).toContainEqual({ kind: 'branch', name: 'main', remotes: ['origin', 'upstream'] })
     expect(described).toContainEqual({ kind: 'branch', name: 'local-only', remotes: [] })
     expect(described).toContainEqual({ kind: 'remote', name: 'published', remotes: ['origin'] })
+  })
+
+  // Regression: the reader used to derive a remote name structurally, by cutting
+  // a `%(refname:short)` listing at its first slash. That cannot express what a
+  // remote name actually is, and the grouper — which matches names longest-first
+  // precisely so a slash-named remote works — was left unable to receive one.
+  test('a slash-named remote is reported whole, and an unfetched one not at all', async () => {
+    const service = createGitService({ rootAbsolutePath: scratchRoot })
+    const result = await service.readCommitLog('slash-remote-repo', { limit: 100 })
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+    // Not `fork`: that would split the ref into a remote and a branch
+    // `alice/main`, neither of which exists. And not `unfetched`: configured,
+    // but with no refs it can never appear in a decoration.
+    expect(result.log.remotes).toEqual(['fork/alice'])
+
+    // End to end: with the right name, the branch and its remote unify into one
+    // pill instead of standing as two.
+    const commit = result.log.commits[0]!
+    expect(commit.refs).toContain('fork/alice/main')
+    const groups = groupRefDecorations(commit.refs, result.log.remotes)
+    expect(groups.map((group) => [group.kind, group.name, group.remotes])).toEqual([
+      ['branch', 'main', ['fork/alice']],
+    ])
+  })
+
+  // Regression: git shortens `refs/remotes/origin/main` to `remotes/origin/main`
+  // when a local `origin/main` would make the short form ambiguous. Cutting that
+  // at the first slash reported a remote named `remotes` and dropped `origin`.
+  test('a local branch colliding with a remote-tracking ref does not forge a remote named `remotes`', async () => {
+    const service = createGitService({ rootAbsolutePath: scratchRoot })
+    const result = await service.readCommitLog('ambiguous-remote-repo', { limit: 100 })
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+    expect(result.log.remotes).toEqual(['origin'])
+    expect(result.log.remotes).not.toContain('remotes')
   })
 })
 

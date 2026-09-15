@@ -2,12 +2,28 @@ import { Fragment, type ReactNode } from 'react'
 import { refGroupLabel, refGroupTitle, type RefGroup } from '../../shared/refGroup'
 
 // Git ref decorations render on two surfaces — graph rows and the commit
-// detail panel — so the pill is one shared unit (ADR-0026/ADR-0027) rather than
-// a copy on each side. It takes a {@link RefGroup}, not a raw decoration: what
+// detail panel — so they are shared units here (ADR-0026/ADR-0027) rather than
+// a copy on each side. They take a {@link RefGroup}, not a raw decoration: what
 // a pill shows is one *ref identity*, which is a local branch together with the
 // remotes that agree with it, and that grouping is pure logic shared with the
-// host through `git-graph/shared` (see `shared/refGroup.ts`). The pill styling
-// lives with the palette in `src/theme.css`.
+// host through `git-graph/shared` (see `shared/refGroup.ts`). The styling lives
+// with the palette in `src/theme.css`.
+//
+// This module exports at two granularities, and the split is the ADR-0027 rule
+// rather than taste:
+//
+//   - {@link RefPill} is one ref, whole. Where a pill sits differs per surface
+//     (the panel interleaves copy and compare controls between pills; a host
+//     might list refs in a branch rail), so placement is *variation* and the
+//     pill is the whole invariant.
+//   - {@link CommitRefRow} is a commit row's refs, whole — the checked-out ring
+//     then the pills, centred on one line with one gap. That arrangement is
+//     *invariant*: the ring is meaningless where it is not immediately before
+//     the refs it qualifies, so its placement must be shared with it. It is
+//     therefore the exported unit, and {@link CheckedOutMarker} stays internal —
+//     handing a host the bare ring to re-place is exactly the under-sharing
+//     ADR-0027 names, and the failure this repo already paid for once with the
+//     working-tree row.
 
 export type RefPillProps = {
   /** One grouped ref — build these with `groupRefDecorations(commit.refs, remotes)`. */
@@ -68,7 +84,7 @@ export function RefPill({ group, children }: RefPillProps) {
   )
 }
 
-export type CheckedOutMarkerProps = {
+type CheckedOutMarkerProps = {
   /** The branch checked out at this commit — named in the marker's description. */
   branchName: string
   /** The row's lane colour, so the ring belongs to the branch line beside it. */
@@ -84,8 +100,13 @@ export type CheckedOutMarkerProps = {
  * Deliberately *not* drawn on the SVG commit node: `CommitGraph` already rings
  * the **selected** commit there, and a second ring would make "selected" and
  * "checked out" the same shape.
+ *
+ * Module-internal on purpose — a ring adrift from the refs it qualifies says
+ * nothing, so {@link CommitRefRow} is what surfaces render and what the barrel
+ * exports (ADR-0027 Rule 1: the shared unit is as large as the invariant, and
+ * placement is part of it).
  */
-export function CheckedOutMarker({ branchName, color }: CheckedOutMarkerProps) {
+function CheckedOutMarker({ branchName, color }: CheckedOutMarkerProps) {
   const description = `The branch "${branchName}" is currently checked out at this commit.`
   return (
     <span
@@ -95,5 +116,57 @@ export function CheckedOutMarker({ branchName, color }: CheckedOutMarkerProps) {
       aria-label={description}
       title={description}
     />
+  )
+}
+
+export type CommitRefRowProps = {
+  /**
+   * One commit's refs, already grouped by identity — build them with
+   * `groupRefDecorations(commit.refs, remotes)` from `git-graph/shared`. Empty
+   * renders nothing at all, not an empty box that still eats the row's gap.
+   */
+  groups: RefGroup[]
+  /**
+   * The row's lane colour (`var(--lane-N)`), which the checked-out ring adopts
+   * so it reads as belonging to the branch line drawn beside it.
+   */
+  laneColor: string
+}
+
+/**
+ * A commit row's ref decorations, whole: the checked-out ring, then one pill per
+ * ref identity, on one centred line with one gap.
+ *
+ * This is the unit rather than the pill or the ring alone because the
+ * *arrangement* is the invariant (ADR-0027 Rule 1). The ring carries no name of
+ * its own on screen — it means "the branch in the pill right there is checked
+ * out", so a surface that placed it anywhere else, or spaced it away from the
+ * pills, would be showing a different thing while looking like the same one.
+ * Which branch the ring names is derived here too, for the same reason: it is
+ * the one local branch at this commit that HEAD points at, and a host
+ * recomputing that rule is a chance to get it wrong. A detached HEAD is on no
+ * branch, so it leaves the row unringed and speaks through its own `HEAD` pill.
+ *
+ * Both surfaces that draw a commit row use it — this repo's `CommitGraph` and
+ * nightshift-ui's panel — and a host aligning its own non-commit row beside the
+ * graph gets the same cluster instead of a hand-rolled dot that drifts from it.
+ */
+export function CommitRefRow({ groups, laneColor }: CommitRefRowProps) {
+  if (groups.length === 0) return null
+  const checkedOutBranch =
+    groups.find((group) => group.kind === 'branch' && group.isHead)?.name ?? null
+
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1.5">
+      {/* The ring leads the row's refs, in the row and not on the SVG node —
+          that ring marks the *selected* commit, and two rings of one shape
+          would blur the two. */}
+      {checkedOutBranch !== null && (
+        <CheckedOutMarker branchName={checkedOutBranch} color={laneColor} />
+      )}
+      {groups.map((group) => (
+        <RefPill key={`${group.kind}:${group.name}`} group={group} />
+      ))}
+    </span>
   )
 }

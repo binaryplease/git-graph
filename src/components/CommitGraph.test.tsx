@@ -214,6 +214,12 @@ describe('CommitGraph checked-out row marker', () => {
     expect(markers[0]!.getAttribute('aria-label')).toBe(description)
     // It rings in the row's own lane colour.
     expect(markers[0]!.getAttribute('style')).toContain('var(--lane-0)')
+    // The graph composes the shared cluster rather than placing the ring
+    // itself, so the arrangement CommitRefRow owns holds here too: same line as
+    // the pills, immediately before the first (ADR-0027).
+    const headRowPill = container.querySelector('.ref-pill')
+    expect(markers[0]!.parentElement).toBe(headRowPill!.parentElement)
+    expect(markers[0]!.nextElementSibling).toBe(headRowPill)
   })
 
   test('a commit with no ref at all is unmarked', () => {

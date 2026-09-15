@@ -10,7 +10,7 @@ import {
   describeFileChange,
   type OpenFileHandler,
 } from './fileStatus'
-import { groupRefDecorations, refGroupLabel } from '../../shared/refGroup'
+import { groupRefDecorations, refGroupCopyValue } from '../../shared/refGroup'
 import { RefPill } from './RefPill'
 
 // The commit detail surface: one commit in, its metadata, message and changed
@@ -506,10 +506,12 @@ export function CommitDetailPanel({
                           className="inline-flex items-center gap-0.5"
                         >
                           <RefPill group={refGroup} />
-                          {/* Copy what the pill shows: `main` for a branch (with
-                              or without remotes), `origin/feature` for a ref that
-                              only exists on one remote. */}
-                          <CopyButton value={refGroupLabel(refGroup).text} label="ref name" />
+                          {/* Copy a ref that resolves: `main` for a branch (with
+                              or without remotes), `origin/feature` for one that
+                              exists only on remotes. Not the pill's label — that
+                              drops the remote qualifier for a name on several
+                              remotes, and bare `shared` looks up nothing. */}
+                          <CopyButton value={refGroupCopyValue(refGroup)} label="ref name" />
                           {/* ADR-0031: the compare affordance sits on the branch
                               pill it acts on, not in global chrome. Precedence: the
                               host's compare seam (an enabled button, host-owned

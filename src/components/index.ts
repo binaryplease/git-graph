@@ -18,20 +18,23 @@ export type { MultiFileDiffViewProps } from './MultiFileDiffView'
 export { CommitDetailPanel } from './CommitDetailPanel'
 export type { CommitDetailPanelProps } from './CommitDetailPanel'
 
-// The ref pill both of the above render. Exported because a host that lists
-// refs anywhere else (a branch rail, a compare header) must render the same
-// badge from the same grouped shape — `groupRefDecorations` in `git-graph/shared`
-// produces its input (ADR-0026: one descriptor, one shared wrapper).
+// A commit row's refs, whole: the checked-out ring followed by one pill per ref
+// identity, arranged on one line. This — not the ring alone — is what a host
+// renders beside its own row. The arrangement is the invariant (the ring means
+// "the branch in the pill *right there* is checked out"), so ADR-0027 Rule 1
+// makes the cluster the shared unit and keeps the bare ring internal; handing a
+// host a loose marker to re-place is the under-sharing the ADR names, and the
+// failure this repo already paid for once with the working-tree row.
+export { CommitRefRow } from './RefPill'
+export type { CommitRefRowProps } from './RefPill'
+
+// One ref on its own, for a surface that is not a commit row — the detail
+// panel's refs line interleaves copy and compare controls between pills, and a
+// host may list refs in a branch rail. Placement genuinely varies there, so the
+// pill is the whole invariant and the surface composes it (ADR-0027 Rule 2).
+// `groupRefDecorations` in `git-graph/shared` produces its input.
 export { RefPill } from './RefPill'
 export type { RefPillProps } from './RefPill'
-
-// The row-level half of the checked-out signal the pill carries as state — the
-// lane-coloured ring CommitGraph puts before a HEAD row's pills. Exported for
-// the same reason as the graph geometry below: a host that renders its own row
-// beside the graph marks HEAD with this ring, not with a second hand-rolled dot
-// that drifts from it (ADR-0027/ADR-0028).
-export { CheckedOutMarker } from './RefPill'
-export type { CheckedOutMarkerProps } from './RefPill'
 
 // The working-tree node that sits above HEAD in the graph. Rendered *outside*
 // CommitGraph (the pinned layout algorithm never sees a non-commit), so a host

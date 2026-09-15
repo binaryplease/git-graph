@@ -3,6 +3,7 @@ import { parseRefDecorations } from './gitLog'
 import {
   classifyRefDecoration,
   groupRefDecorations,
+  refGroupCopyValue,
   refGroupLabel,
   refGroupTitle,
 } from './refGroup'
@@ -59,6 +60,45 @@ describe('classifyRefDecoration', () => {
       kind: 'remote',
       name: 'main',
       remote: 'upstream',
+    })
+  })
+
+  // Regression: the `remotes/` prefix is a naming convention, not a proof, and
+  // it used to be trusted as one — the leading segment was read as the remote
+  // whenever no configured name matched. git accepts `git branch
+  // remotes/foo/bar` and prints that branch as exactly `remotes/foo/bar`, so in
+  // a repository with no remotes the branch was read as `foo`'s `bar`. The
+  // grouping below is where that turned into the forbidden claim: the sibling
+  // local branch `bar` folded it in and the tooltip asserted a sync with
+  // `foo/bar`, a ref that exists nowhere. The short form was already protected;
+  // the long one must obey the same contract.
+  test('no remotes means no remote for the long form either', () => {
+    expect(classifyRefDecoration('remotes/foo/bar', [])).toEqual({
+      kind: 'branch',
+      name: 'remotes/foo/bar',
+      isHead: false,
+    })
+    const groups = groupRefDecorations(['bar', 'remotes/foo/bar'], [])
+    expect(groups.map((group) => [group.kind, group.name, group.remotes])).toEqual([
+      ['branch', 'bar', []],
+      ['branch', 'remotes/foo/bar', []],
+    ])
+    expect(groups.every((group) => refGroupLabel(group).markerRemotes.length === 0)).toBe(true)
+    expect(groups.map(refGroupTitle).some((title) => title.includes('in sync'))).toBe(false)
+  })
+
+  test('the long form is remote only when what follows names a configured remote', () => {
+    // `origin` is a remote here, `foo` is not — so one is folded and the other
+    // stays the branch name git printed.
+    expect(classifyRefDecoration('remotes/foo/bar', ['origin'])).toEqual({
+      kind: 'branch',
+      name: 'remotes/foo/bar',
+      isHead: false,
+    })
+    expect(classifyRefDecoration('remotes/origin/bar', ['origin'])).toEqual({
+      kind: 'remote',
+      name: 'bar',
+      remote: 'origin',
     })
   })
 
@@ -247,6 +287,42 @@ describe('refGroupLabel', () => {
   test('a tag prints its bare name', () => {
     const [group] = groupRefDecorations(['tag: v1.0'], [])
     expect(refGroupLabel(group!)).toEqual({ text: 'v1.0', markerRemotes: [] })
+  })
+})
+
+// What a copy button hands the user has one requirement the pill's label does
+// not: it has to be a ref `git` can actually look up.
+describe('refGroupCopyValue', () => {
+  // Regression: `refGroupLabel` drops the qualifier for a name that lives on
+  // several remotes and nowhere locally, so copying the label handed over a
+  // bare `shared` — which resolves to nothing. Before ref grouping existed this
+  // copied `origin/shared`.
+  test('a name on several remotes but no local branch copies a qualified ref', () => {
+    const [group] = groupRefDecorations(['origin/shared', 'upstream/shared'], ['origin', 'upstream'])
+    // The pill still says `shared` — that rendering is deliberate and separate.
+    expect(refGroupLabel(group!).text).toBe('shared')
+    // The copied value names a ref that exists.
+    expect(refGroupCopyValue(group!)).toBe('origin/shared')
+  })
+
+  test('a ref on one remote copies the qualified name it already shows', () => {
+    const [group] = groupRefDecorations(['origin/feature'], ['origin'])
+    expect(refGroupCopyValue(group!)).toBe('origin/feature')
+    expect(refGroupCopyValue(group!)).toBe(refGroupLabel(group!).text)
+  })
+
+  test('a local branch copies its own name, remotes or not', () => {
+    const [synced] = groupRefDecorations(['HEAD -> main', 'origin/main'], ['origin'])
+    expect(refGroupCopyValue(synced!)).toBe('main')
+    const [local] = groupRefDecorations(['feature'], ['origin'])
+    expect(refGroupCopyValue(local!)).toBe('feature')
+  })
+
+  test('a tag and a detached HEAD copy names that resolve', () => {
+    const [tag] = groupRefDecorations(['tag: v1.0'], [])
+    expect(refGroupCopyValue(tag!)).toBe('v1.0')
+    const [head] = groupRefDecorations(['HEAD'], [])
+    expect(refGroupCopyValue(head!)).toBe('HEAD')
   })
 })
 

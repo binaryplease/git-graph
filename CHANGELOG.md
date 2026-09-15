@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING** — `git-graph/components` now exports `CommitRefRow`, a commit row's refs
+  whole (the checked-out ring followed by the pills, on one line), and no longer exports
+  the bare `CheckedOutMarker`. The arrangement is the thing worth sharing: the ring
+  carries no name on screen, so it only reads as "checked out" while it sits immediately
+  before the pills it qualifies, and a host given a loose marker to place itself is free
+  to break that while still rendering both parts (ADR-0027 Rule 1). Embedders that drew
+  the ring themselves render `<CommitRefRow>` instead and stop deriving which branch it
+  names. ([#6])
 - **BREAKING** — `CommitGraph` now takes a required `remotes` prop (the repository's
   remote names, as `CommitLog.remotes`). Embedders of `git-graph/components` must pass
   it; there is no default, because an empty array has to mean "this repository has no
@@ -37,6 +45,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A tag whose name contains a comma — for example `v1,origin/release` — no longer forges a
   remote onto an unrelated branch's pill. Ref decorations are split on `", "`, which cannot
   occur inside a ref name. ([#6])
+- A ref pill no longer forges a remote out of the long `remotes/…` decoration form. The
+  `remotes/` prefix was trusted as proof that what followed named a remote, so in a
+  repository with no remotes at all the perfectly legal local branch `remotes/foo/bar` was
+  read as `foo`'s branch `bar` — and a sibling branch `bar` folded it in and claimed to be
+  in sync with `foo/bar`, a ref that exists nowhere. The long form is now remote-tracking
+  only when what follows names a remote git itself reported, which is the rule the short
+  form already followed. ([#6])
+- Remote names are no longer mangled when a remote's own name contains a slash.
+  `git remote add fork/alice …` is legal, and `refs/remotes/fork/alice/main` was being cut
+  at its first slash into a remote `fork` and a branch `alice/main` — neither of which
+  exists — so a branch tracked on such a remote never unified with it. Names now come from
+  `git remote`, the only listing that knows them, filtered by `refs/remotes` so a
+  configured-but-never-fetched remote still cannot claim a same-named local branch. ([#6])
+- A repository holding both `refs/heads/origin/main` and `refs/remotes/origin/main` no
+  longer reports a remote called `remotes`. Ref shortening disambiguates the second as
+  `remotes/origin/main`, and reading that short name structurally invented the bogus name
+  while dropping `origin` entirely; full `%(refname)` values have one shape. ([#6])
+- The copy button on a ref pill always yields a ref that resolves. For a name that exists
+  on several remotes and nowhere locally the pill reads `shared`, and the copy value was
+  taken from that label — putting a bare `shared` on the clipboard, which git cannot look
+  up. It now copies `origin/shared`. ([#6])
 
 [#1]: https://github.com/binaryplease/git-graph/issues/1
 [#6]: https://github.com/binaryplease/git-graph/pull/6
