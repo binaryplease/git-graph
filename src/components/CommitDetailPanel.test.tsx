@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, test } from 'bun:test'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { CommitDetail, CommitFileChange } from '../../shared/git.schema'
 import { CommitDetailPanel } from './CommitDetailPanel'
 
@@ -345,15 +345,15 @@ describe('CommitDetailPanel full-commit and compare affordances', () => {
   })
 })
 
+const pillTexts = () =>
+  [...document.querySelectorAll('.ref-pill')].map((pill) => pill.textContent ?? '')
+const remoteSegments = () =>
+  [...document.querySelectorAll('.ref-segment-remote')].map((segment) => segment.textContent ?? '')
+
 // The panel is the second surface that renders ref pills, and it groups them
 // from the same shared function the graph rows use — the detail payload carries
 // the repository's remote names for exactly this.
 describe('CommitDetailPanel ref pills', () => {
-  const pillTexts = () =>
-    [...document.querySelectorAll('.ref-pill')].map((pill) => pill.textContent ?? '')
-  const remoteSegments = () =>
-    [...document.querySelectorAll('.ref-segment-remote')].map((segment) => segment.textContent ?? '')
-
   test('a branch and its remotes on this commit render one segmented pill per remote', () => {
     renderPanel({
       detail: {
@@ -409,5 +409,59 @@ describe('CommitDetailPanel ref pills', () => {
     // The copy control stays on the pill (ADR-0025) and offers the ref as it is
     // shown, remote and all.
     expect(screen.getByRole('button', { name: /ref name/i })).toBeTruthy()
+  })
+})
+
+// What the copy control actually puts on the clipboard, read off a stubbed
+// Clipboard API rather than off a prop — the requirement is that the user ends
+// up holding a ref `git` can look up.
+describe('CommitDetailPanel ref copy value', () => {
+  // bun runs every test file in one process, so the stub is installed per test
+  // and the original descriptor put back — a leaked fake clipboard would make
+  // every later CopyButton test order-dependent.
+  const originalClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+  let written: string[] = []
+  beforeEach(() => {
+    written = []
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: async (text: string) => void written.push(text) },
+      configurable: true,
+    })
+  })
+  afterEach(() => {
+    if (originalClipboard) Object.defineProperty(navigator, 'clipboard', originalClipboard)
+    else delete (navigator as { clipboard?: unknown }).clipboard
+  })
+
+  const copyRefName = async () => {
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /ref name/i }))
+    })
+    return written
+  }
+
+  // Regression: the pill drops the remote qualifier for a name that lives on
+  // several remotes and nowhere locally, and the copy value used to be read
+  // straight off that label — handing over a bare `shared`, which resolves to
+  // nothing. Before ref grouping existed it copied `origin/shared`.
+  test('a name on several remotes but no local branch copies a ref that resolves', async () => {
+    renderPanel({
+      detail: {
+        ...commitDetail,
+        refs: ['origin/shared', 'upstream/shared'],
+        remotes: ['origin', 'upstream'],
+      },
+    })
+    // The pill still reads `shared`, with both remotes as segments.
+    expect(pillTexts()).toEqual(['shared origin upstream'])
+    expect(await copyRefName()).toEqual(['origin/shared'])
+  })
+
+  test('a local branch copies its own name, not its remotes', async () => {
+    renderPanel({
+      detail: { ...commitDetail, refs: ['HEAD -> main', 'origin/main'], remotes: ['origin'] },
+    })
+    expect(pillTexts()).toEqual(['main origin'])
+    expect(await copyRefName()).toEqual(['main'])
   })
 })

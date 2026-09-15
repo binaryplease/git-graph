@@ -3,7 +3,7 @@ import type { GitCommit } from '../../shared/git.schema'
 import { computeGraphLayout } from '../../shared/graphLayout'
 import { fuzzyHighlight, type FuzzyHighlight } from '../../shared/fuzzy'
 import { groupRefDecorations } from '../../shared/refGroup'
-import { CheckedOutMarker, RefPill } from './RefPill'
+import { CommitRefRow } from './RefPill'
 
 // The reusable commit-graph view: commits in, SVG + rows out. It owns no data
 // fetching and no app chrome, so it can be lifted into another host
@@ -143,12 +143,6 @@ export function CommitGraph({
           hash,
           author,
           refGroups,
-          // The branch HEAD is on at this commit, if any — what the row's
-          // checked-out ring names. A detached HEAD is on no branch, so it
-          // leaves the row unmarked and speaks through its own `HEAD` pill.
-          checkedOutBranch:
-            refGroups.find((refGroup) => refGroup.kind === 'branch' && refGroup.isHead)?.name ??
-            null,
           matched: subject.matched || hash.matched || author.matched,
         }
       }),
@@ -260,7 +254,7 @@ export function CommitGraph({
       <div ref={rowsContainerRef} className="relative">
         {/* One wrapper per row keeps children[row] stable for scrollIntoView even
             when the inline detail is inserted after the selected row. */}
-        {rows.map(({ commit, subject, hash, author, refGroups, checkedOutBranch, matched }, row) => (
+        {rows.map(({ commit, subject, hash, author, refGroups, matched }, row) => (
           <div key={`${commit.hash}-${row}`}>
             <button
               type="button"
@@ -271,22 +265,12 @@ export function CommitGraph({
               style={{ height: ROW_HEIGHT, paddingLeft: graphContentLeft(layout.laneCount) }}
               onClick={() => onSelectCommit?.(commit)}
             >
-              {refGroups.length > 0 && (
-                <span className="inline-flex shrink-0 items-center gap-1.5">
-                  {/* The checked-out ring leads the row's refs, in the row and
-                      not on the SVG node — that ring marks the *selected*
-                      commit, and two rings of one shape would blur the two. */}
-                  {checkedOutBranch !== null && (
-                    <CheckedOutMarker
-                      branchName={checkedOutBranch}
-                      color={laneColor(layout.placements[row]!.lane)}
-                    />
-                  )}
-                  {refGroups.map((refGroup) => (
-                    <RefPill key={`${refGroup.kind}:${refGroup.name}`} group={refGroup} />
-                  ))}
-                </span>
-              )}
+              {/* The row's refs as one cluster — ring and pills, arranged once
+                  in CommitRefRow rather than re-placed per surface (ADR-0027). */}
+              <CommitRefRow
+                groups={refGroups}
+                laneColor={laneColor(layout.placements[row]!.lane)}
+              />
               <span className="min-w-0 flex-1 truncate">
                 <FuzzySegments highlight={subject} />
               </span>

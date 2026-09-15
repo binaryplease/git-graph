@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import { parseRefDecorations } from './gitLog'
 import {
+  RefGroupSchema,
   classifyRefDecoration,
   groupRefDecorations,
+  refGroupCopyValue,
   refGroupLabel,
   refGroupTitle,
 } from './refGroup'
@@ -54,12 +56,72 @@ describe('classifyRefDecoration', () => {
     })
   })
 
-  test('the long `remotes/` form is the same ref as the short one', () => {
-    expect(classifyRefDecoration('remotes/upstream/main', ['upstream'])).toEqual({
-      kind: 'remote',
-      name: 'main',
-      remote: 'upstream',
+  // Regression: a `remotes/…` decoration never names a remote-tracking ref, so
+  // the prefix gets no special handling. git shortens remote-tracking refs to
+  // `origin/main` in `%d`/`%D` and does not disambiguate there (a repository
+  // holding both `refs/heads/origin/main` and `refs/remotes/origin/main` prints
+  // `origin/main` twice), so the long form only ever arrives as the name of a
+  // local branch someone created — `git branch remotes/origin/feature` is
+  // accepted and prints as exactly that.
+  //
+  // Two guesses have been removed here in turn. The first read the leading
+  // segment as the remote when nothing matched. The second survived it: the
+  // prefix was still *stripped* before matching, so with `origin` configured
+  // this branch was read as `origin`'s `feature` — and a sibling local
+  // `feature` folded it in and claimed a sync with `refs/remotes/origin/feature`,
+  // a ref that exists nowhere. Matching the decoration whole is what tells a
+  // local branch from a remote-tracking ref.
+  test('a `remotes/` decoration is a local branch, whatever the remotes are', () => {
+    // No remotes at all.
+    expect(classifyRefDecoration('remotes/foo/bar', [])).toEqual({
+      kind: 'branch',
+      name: 'remotes/foo/bar',
+      isHead: false,
     })
+    // The leading segment is not a remote.
+    expect(classifyRefDecoration('remotes/foo/bar', ['origin'])).toEqual({
+      kind: 'branch',
+      name: 'remotes/foo/bar',
+      isHead: false,
+    })
+    // The leading segment *is* a remote — the case the strip used to forge.
+    expect(classifyRefDecoration('remotes/origin/feature', ['origin'])).toEqual({
+      kind: 'branch',
+      name: 'remotes/origin/feature',
+      isHead: false,
+    })
+  })
+
+  test('no remotes means no remote for the long form either', () => {
+    const groups = groupRefDecorations(['bar', 'remotes/foo/bar'], [])
+    expect(groups.map((group) => [group.kind, group.name, group.remotes])).toEqual([
+      ['branch', 'bar', []],
+      ['branch', 'remotes/foo/bar', []],
+    ])
+    expect(groups.every((group) => refGroupLabel(group).markerRemotes.length === 0)).toBe(true)
+    expect(groups.map(refGroupTitle).some((title) => title.includes('in sync'))).toBe(false)
+  })
+
+  // The failure reproduced against real git: remote `origin` is fetched, and the
+  // local branches `feature` and `remotes/origin/feature` sit on one commit.
+  // `refs/remotes/origin/feature` does not exist, so nothing here may say it
+  // does.
+  test('a local branch named remotes/<remote>/<x> never forges a sync onto its namesake', () => {
+    const groups = groupRefDecorations(
+      ['HEAD -> main', 'origin/main', 'remotes/origin/feature', 'feature'],
+      ['origin'],
+    )
+    expect(groups.map((group) => [group.kind, group.name, group.remotes])).toEqual([
+      // `main` really is in sync with `origin/main` — that claim is git's.
+      ['branch', 'main', ['origin']],
+      ['branch', 'remotes/origin/feature', []],
+      ['branch', 'feature', []],
+    ])
+    const featureGroup = groups[2]!
+    expect(refGroupLabel(featureGroup).markerRemotes).toEqual([])
+    expect(refGroupTitle(featureGroup)).toBe(
+      'local branch feature — no remote-tracking ref at this commit',
+    )
   })
 
   // Regression: an empty remote list is git's authoritative "this repository has
@@ -191,12 +253,15 @@ describe('groupRefDecorations', () => {
     expect(groups[0]!.remotes).toEqual(['origin'])
   })
 
+  // The dedup guard in its own right. This used to be exercised with
+  // `remotes/origin/main` as the repeat, which stopped being a second reading of
+  // `origin/main` once the `remotes/` strip was removed — it is a local branch
+  // of its own name now, and would have left the guard untested.
   test('a repeated remote is only counted once', () => {
-    const groups = groupRefDecorations(
-      ['main', 'origin/main', 'remotes/origin/main'],
-      ['origin'],
-    )
+    const groups = groupRefDecorations(['main', 'origin/main', 'origin/main'], ['origin'])
+    expect(groups).toHaveLength(1)
     expect(groups[0]!.remotes).toEqual(['origin'])
+    expect(groups[0]!.decorations).toEqual(['main', 'origin/main', 'origin/main'])
   })
 
   test('undecorated commits yield no groups', () => {
@@ -247,6 +312,51 @@ describe('refGroupLabel', () => {
   test('a tag prints its bare name', () => {
     const [group] = groupRefDecorations(['tag: v1.0'], [])
     expect(refGroupLabel(group!)).toEqual({ text: 'v1.0', markerRemotes: [] })
+  })
+})
+
+// What a copy button hands the user has one requirement the pill's label does
+// not: it has to be a ref `git` can actually look up.
+describe('refGroupCopyValue', () => {
+  // Regression: `refGroupLabel` drops the qualifier for a name that lives on
+  // several remotes and nowhere locally, so copying the label handed over a
+  // bare `shared` — which resolves to nothing. Before ref grouping existed this
+  // copied `origin/shared`.
+  test('a name on several remotes but no local branch copies a qualified ref', () => {
+    const [group] = groupRefDecorations(['origin/shared', 'upstream/shared'], ['origin', 'upstream'])
+    // The pill still says `shared` — that rendering is deliberate and separate.
+    expect(refGroupLabel(group!).text).toBe('shared')
+    // The copied value names a ref that exists.
+    expect(refGroupCopyValue(group!)).toBe('origin/shared')
+  })
+
+  test('a ref on one remote copies the qualified name it already shows', () => {
+    const [group] = groupRefDecorations(['origin/feature'], ['origin'])
+    expect(refGroupCopyValue(group!)).toBe('origin/feature')
+    expect(refGroupCopyValue(group!)).toBe(refGroupLabel(group!).text)
+  })
+
+  test('a local branch copies its own name, remotes or not', () => {
+    const [synced] = groupRefDecorations(['HEAD -> main', 'origin/main'], ['origin'])
+    expect(refGroupCopyValue(synced!)).toBe('main')
+    const [local] = groupRefDecorations(['feature'], ['origin'])
+    expect(refGroupCopyValue(local!)).toBe('feature')
+  })
+
+  test('a tag and a detached HEAD copy names that resolve', () => {
+    const [tag] = groupRefDecorations(['tag: v1.0'], [])
+    expect(refGroupCopyValue(tag!)).toBe('v1.0')
+    const [head] = groupRefDecorations(['HEAD'], [])
+    expect(refGroupCopyValue(head!)).toBe('HEAD')
+  })
+
+  // `groupRefDecorations` never builds this shape, but `RefGroupSchema` admits
+  // it (`remotes` defaults to `[]`), so a host parsing its own groups can hold
+  // one. The bare name is the only ref text it has; `undefined/shared` is not.
+  test('a remote group the schema built with no remotes copies its bare name', () => {
+    const group = RefGroupSchema.parse({ kind: 'remote', name: 'shared' })
+    expect(group.remotes).toEqual([])
+    expect(refGroupCopyValue(group)).toBe('shared')
   })
 })
 

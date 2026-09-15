@@ -60,22 +60,24 @@ export type RefGroup = z.infer<typeof RefGroupSchema>
 // pointed at by HEAD.
 const TAG_PREFIX = /^tag:\s*/
 const HEAD_POINTER = /^HEAD\s*->\s*/
-// `%d` normally prints remote-tracking refs short (`origin/main`), but a
-// repository configured to print them long says `remotes/origin/main`. Both
-// mean the same ref.
-const REMOTES_PREFIX = 'remotes/'
 
 /**
  * Which of `remoteNames` a short remote-tracking ref belongs to, or null when
  * none does — the longest match wins, because a remote may legally be named
- * with a slash (`fork/alice`) and only the longest match splits
- * `fork/alice/main` into the right remote and the right branch.
+ * with a slash (`git remote add fork/alice …` is accepted) and only the longest
+ * match splits `fork/alice/main` into the right remote and the right branch.
+ * The server produces these names with `git remote`, which is the only listing
+ * that knows a multi-segment name; `refs/remotes/fork/alice/main` alone cannot
+ * be re-split into one.
  *
- * `remoteNames` is the repository's own list and there is deliberately no
- * fallback guess: an empty list is git's authoritative answer that the
- * repository has no remote-tracking refs, so a decoration that merely *looks*
- * like `origin/<something>` there is a local branch, and claiming otherwise
- * would invent a remote — and then a sync with it — that does not exist.
+ * `remoteNames` is the repository's own list, and matching the decoration
+ * **whole** against it is the module's only test for "remote-tracking" — there
+ * is no second path and no guess anywhere, so an empty list is git's
+ * authoritative answer that the repository has no remote-tracking refs. A
+ * decoration that merely *looks* remote is a local branch: `origin/main` where
+ * `origin` is not a remote, and `remotes/origin/feature` in any repository at
+ * all, since no prefix is stripped before matching. Claiming otherwise would
+ * invent a remote, and then a sync with it, that does not exist.
  */
 function matchRemoteName(shortRef: string, remoteNames: readonly string[]): string | null {
   let longestMatch: string | null = null
@@ -85,13 +87,6 @@ function matchRemoteName(shortRef: string, remoteNames: readonly string[]): stri
     if (longestMatch === null || remoteName.length > longestMatch.length) longestMatch = remoteName
   }
   return longestMatch
-}
-
-/** The remote name a `remotes/`-prefixed ref belongs to when no configured name matches. */
-function leadingSegment(shortRef: string): string | null {
-  const separatorIndex = shortRef.indexOf('/')
-  if (separatorIndex <= 0 || separatorIndex === shortRef.length - 1) return null
-  return shortRef.slice(0, separatorIndex)
 }
 
 /** One decoration, classified — the per-entry half of {@link groupRefDecorations}. */
@@ -138,14 +133,19 @@ export function classifyRefDecoration(
   // HEAD marker and let it collect remotes it has nothing to do with.
   if (isHead) return { kind: 'branch', name: pointee, isHead: true }
 
-  if (pointee.startsWith(REMOTES_PREFIX)) {
-    const shortRef = pointee.slice(REMOTES_PREFIX.length)
-    const remoteName = matchRemoteName(shortRef, remoteNames) ?? leadingSegment(shortRef)
-    if (remoteName !== null) {
-      return { kind: 'remote', name: shortRef.slice(remoteName.length + 1), remote: remoteName }
-    }
-  }
-
+  // A `remotes/…` decoration gets **no** special handling, and that is the whole
+  // rule rather than an omission. git shortens a remote-tracking ref to
+  // `origin/main` in `%d`/`%D` and does not disambiguate there — a repository
+  // holding both `refs/heads/origin/main` and `refs/remotes/origin/main` prints
+  // `origin/main` twice — so the long form never names a remote-tracking ref in
+  // the only input this module receives. What it does name is a local branch
+  // someone called `remotes/origin/feature`, which git accepts. Stripping the
+  // prefix first and matching the rest was the last surviving guess: it read
+  // that branch as `origin`'s `feature`, folded it into a sibling local
+  // `feature`, and claimed a sync with `refs/remotes/origin/feature` — a ref
+  // that exists nowhere. Matching the name whole is what tells the two apart,
+  // and a remote genuinely called `remotes` still classifies here, by being in
+  // `remoteNames` like every other remote.
   const remoteName = matchRemoteName(pointee, remoteNames)
   if (remoteName !== null) {
     return { kind: 'remote', name: pointee.slice(remoteName.length + 1), remote: remoteName }
@@ -229,7 +229,11 @@ export function groupRefDecorations(
 
 /** What a ref pill prints for a group: the ref itself, plus the remotes to mark. */
 export type RefGroupLabel = {
-  /** The ref's text, without the HEAD marker — also what a user means by "copy this ref". */
+  /**
+   * The ref's text, without the HEAD marker. Display only: it is unqualified
+   * for a name on several remotes and nowhere locally, so what a copy control
+   * hands over is {@link refGroupCopyValue}, never this.
+   */
   text: string
   /**
    * Remotes to append to the chip as further segments of the same pill, or
@@ -252,6 +256,33 @@ export function refGroupLabel(group: RefGroup): RefGroupLabel {
     return { text: `${onlyRemote}/${group.name}`, markerRemotes: [] }
   }
   return { text: group.name, markerRemotes: [...group.remotes] }
+}
+
+/**
+ * The ref a copy button should hand the user: always a name that resolves in
+ * the repository, which is not always the name the pill prints.
+ *
+ * `refGroupLabel` drops the remote qualifier for a ref that lives on *several*
+ * remotes and nowhere locally (`origin/shared` + `upstream/shared` print as
+ * `shared` with two segments), because the pill's subject is the shared name.
+ * A bare `shared` resolves to nothing, so copying the label would hand over a
+ * ref git cannot look up. Qualifying with the first remote — the same one the
+ * single-remote pill already prints in full — always names a real ref. Whether
+ * the *pill* should stay unqualified there is a separate, open question; this
+ * function is deliberately independent of it so the answer can change without
+ * the copy value going wrong again.
+ */
+export function refGroupCopyValue(group: RefGroup): string {
+  // `groupRefDecorations` only ever builds a `remote` group with at least one
+  // remote, but `RefGroupSchema` defaults `remotes` to `[]`, so a host that
+  // parses `{ kind: 'remote', name }` through the schema holds a remote group
+  // with no remote to qualify by. Falling back to the bare name there hands
+  // over the only ref text the group has, never the string `undefined/name`.
+  const [firstRemote] = group.remotes
+  if (group.kind === 'remote' && firstRemote !== undefined) return `${firstRemote}/${group.name}`
+  // A tag, a local branch (with or without remotes) and a detached `HEAD` all
+  // resolve under their own name.
+  return group.name
 }
 
 /** The qualified remote-tracking names a group agrees with: `origin/main, upstream/main`. */

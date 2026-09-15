@@ -30,6 +30,9 @@ export const COMMIT_DETAIL_ARGUMENTS = [
   '-m',
   '--first-parent',
   `--format=${COMMIT_DETAIL_PRETTY_FORMAT}`,
+  // `%D` honours `log.decorate` like `%d` does; pin the short form the ref
+  // grouper is written against (see `COMMIT_LOG_ARGUMENTS`).
+  '--decorate=short',
 ] as const
 
 /** Commits touching more files than this report a truncated file list. */
