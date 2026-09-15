@@ -13,7 +13,7 @@ import {
 import { gitRoutes } from './routes/git'
 
 const SERVICE_NAME = 'git-graph'
-const SERVICE_VERSION = '0.1.0'
+const SERVICE_VERSION = '0.2.0'
 
 // Captured once at module load, so `/api/status` can report how long this
 // process has been serving. Reported as an ISO string and a derived uptime.

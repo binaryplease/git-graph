@@ -46,7 +46,7 @@ import {
 } from './cli/daemon'
 
 const CLI_NAME = 'bgg'
-const CLI_VERSION = '0.1.0'
+const CLI_VERSION = '0.2.0'
 const DEFAULT_HOST = '127.0.0.1'
 const DEFAULT_BASE_PORT = 3010
 

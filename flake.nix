@@ -19,7 +19,7 @@
           pkgs = nixpkgs.legacyPackages.${system};
 
           pname = "git-graph";
-          version = "0.1.0";
+          version = "0.2.0";
 
           # Vendored dependencies as a fixed-output derivation: `bun install`
           # needs the network, which only an FOD is allowed, so deps are fetched

@@ -20,7 +20,7 @@ export type HealthResponse = z.infer<typeof HealthResponseSchema>
 // (ADR-0024) so a consumer always sees the full shape.
 export const StatusResponseSchema = z.object({
   name: z.string().default('git-graph').describe('Service name.'),
-  version: z.string().default('0.1.0').describe('Service version.'),
+  version: z.string().default('0.2.0').describe('Service version.'),
   pid: z.number().int().default(0).describe('Process id of the running server.'),
   uptimeSeconds: z
     .number()

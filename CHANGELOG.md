@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-09-15
+
 ### Changed
 
 - **BREAKING** — `git-graph/components` now exports `CommitRefRow`, a commit row's refs
@@ -90,6 +92,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on several remotes and nowhere locally the pill reads `shared`, and the copy value was
   taken from that label — putting a bare `shared` on the clipboard, which git cannot look
   up. It now copies `origin/shared`. ([#9])
+
+[Unreleased]: https://github.com/binaryplease/git-graph/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/binaryplease/git-graph/compare/v0.1.0...v0.2.0
 
 [#1]: https://github.com/binaryplease/git-graph/issues/1
 [#6]: https://github.com/binaryplease/git-graph/pull/6
