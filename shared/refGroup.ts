@@ -232,8 +232,10 @@ export type RefGroupLabel = {
   /** The ref's text, without the HEAD marker — also what a user means by "copy this ref". */
   text: string
   /**
-   * Remotes to name in the synced marker beside the text, or empty when there
-   * is nothing to mark.
+   * Remotes to append to the chip as further segments of the same pill, or
+   * empty when the ref names itself alone. (The name predates the redesign that
+   * turned a separate marker into in-chip segments; it is part of this module's
+   * public shape, so renaming it is its own change.)
    */
   markerRemotes: string[]
 }
@@ -242,7 +244,7 @@ export type RefGroupLabel = {
  * The display parts of a group. A ref that exists on exactly one remote and
  * nowhere locally is not "in sync" with anything — it is simply that remote's
  * branch, so it keeps the qualified name git printed (`origin/feature`) and
- * carries no marker, exactly as it rendered before grouping existed.
+ * gains no segments, exactly as it rendered before grouping existed.
  */
 export function refGroupLabel(group: RefGroup): RefGroupLabel {
   const [onlyRemote] = group.remotes

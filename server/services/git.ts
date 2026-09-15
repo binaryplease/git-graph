@@ -155,8 +155,13 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
    * `git remote`) is deliberate — only a remote with refs can ever appear in a
    * decoration, so this list covers exactly the names that need classifying.
    *
-   * A failure here is not fatal: an empty list only means the client falls back
-   * to git's default remote name, so the graph still renders.
+   * There is no fallback on the read side either: an empty list is git's
+   * authoritative "no remote-tracking refs here", and the client classifies
+   * against it as such. So a failure here is not fatal but it is not free — the
+   * graph still renders, with every decoration read as a local branch under the
+   * qualified name git printed (`origin/main` as a branch called that), which is
+   * the pre-grouping rendering. It errs toward claiming no sync, never toward
+   * claiming one that does not exist.
    */
   async function readRemoteNames(repositoryPath: string): Promise<string[]> {
     const { stdout, exitCode } = await runGit(repositoryPath, [

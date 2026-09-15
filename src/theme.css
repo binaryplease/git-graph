@@ -163,6 +163,12 @@ mark {
    row, never on the SVG commit node, where the selection halo already owns the
    ring shape. */
 .ref-head-dot {
+  /* Declared even though `CommitGraph` puts it in an inline-flex parent, where a
+     flex item's display is blown away anyway: the component is barrel-exported so
+     a host can mark HEAD on its own row, and in a plain block parent an inline
+     span ignores `width`, `height` and `flex` alike — the ring would paint as a
+     blob on the text baseline. */
+  display: inline-block;
   width: 6px;
   height: 6px;
   flex: none;
