@@ -24,6 +24,20 @@ export const GitCommitSchema = z.object({
 })
 export type GitCommit = z.infer<typeof GitCommitSchema>
 
+// The repository's own remote names, read from `git for-each-ref refs/remotes`.
+// It travels with every payload that carries ref decorations because a
+// decoration cannot be classified without it: remote names are arbitrary, so
+// only this list tells `fork/main` (a remote-tracking ref) from `feature/main`
+// (a local branch with a slash in its name).
+export const RemoteNamesSchema = z
+  .array(z.string())
+  .default([])
+  .describe(
+    'Names of the remotes configured in this repository, sorted. Used to classify and group ' +
+      'the ref decorations above — `origin/main` is a remote-tracking ref only because ' +
+      '`origin` is in this list. Empty for a repository with no remote-tracking refs.',
+  )
+
 export const RepositorySummarySchema = z.object({
   name: z.string().min(1).describe('Repository directory basename, used as the display name.'),
   relativePath: z
@@ -56,6 +70,7 @@ export const CommitLogSchema = z.object({
         'as produced by `git log --all --topo-order`. Topological order is what the graph ' +
         'layout algorithm requires.',
     ),
+  remotes: RemoteNamesSchema,
   truncated: z
     .boolean()
     .default(false)
@@ -115,6 +130,7 @@ export const CommitDetailSchema = z.object({
     .default([])
     .describe('Abbreviated parent hashes (git `%p`), first parent first. Empty for root commits.'),
   refs: z.array(z.string()).default([]).describe('Ref decorations pointing at this commit (git `%D`).'),
+  remotes: RemoteNamesSchema,
   author: z.string().default('').describe('Author name (git `%an`).'),
   authorEmail: z.string().default('').describe('Author email (git `%ae`).'),
   authorDate: z.string().default('').describe('Author date, ISO 8601 (git `%aI`).'),

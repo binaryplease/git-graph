@@ -10,7 +10,8 @@ import {
   describeFileChange,
   type OpenFileHandler,
 } from './fileStatus'
-import { RefPill, classifyRef, refName } from './RefPill'
+import { groupRefDecorations, refGroupLabel } from '../../shared/refGroup'
+import { RefPill } from './RefPill'
 
 // The commit detail surface: one commit in, its metadata, message and changed
 // files out. Like CommitGraph it fetches nothing and owns no app chrome — the
@@ -337,6 +338,11 @@ export function CommitDetailPanel({
   const totalAdditions = (detail?.files ?? []).reduce((sum, file) => sum + (file.additions ?? 0), 0)
   const totalDeletions = (detail?.files ?? []).reduce((sum, file) => sum + (file.deletions ?? 0), 0)
 
+  // One pill per ref identity, exactly as the graph rows group them — the
+  // detail carries the repository's remote names for this, so the panel needs no
+  // extra fetch to tell `origin/main` from a local branch.
+  const refGroups = groupRefDecorations(detail?.refs ?? [], detail?.remotes ?? [])
+
   // The panel's view controls (any host-supplied headerActions + close). Sidebar
   // hangs them off its titled header; inline has no title to head a bar, so it
   // floats the same cluster compactly in the top-right corner instead (below).
@@ -482,23 +488,28 @@ export function CommitDetailPanel({
                 )}
               </MetadataRow>
 
-              {detail.refs.length > 0 && (
+              {refGroups.length > 0 && (
                 <MetadataRow label="refs">
                   <span className="flex flex-wrap items-center gap-1.5">
-                    {detail.refs.map((refDecoration) => {
-                      // Only a local branch can be compared against the default
-                      // base — a remote-tracking ref or a tag is not one the
-                      // server's branch listing validates.
-                      const branchName = refName(refDecoration)
-                      const refKind = classifyRef(refDecoration)
-                      // Only a local branch is comparable; a tag or remote-tracking
-                      // ref is not one the server's branch listing validates.
-                      const isComparableRef = refKind === 'branch' || refKind === 'head'
+                    {refGroups.map((refGroup) => {
+                      // Only a local branch is comparable; a tag, a ref that
+                      // exists only on remotes, and a detached HEAD are not names
+                      // the server's branch listing validates. A unified pill is
+                      // comparable by its bare branch name — the remotes it agrees
+                      // with change nothing about which ref is being compared.
+                      const branchName = refGroup.name
+                      const isComparableRef = refGroup.kind === 'branch'
                       const compareTo = isComparableRef ? buildCompareHref(branchName) : null
                       return (
-                        <span key={refDecoration} className="inline-flex items-center gap-0.5">
-                          <RefPill refDecoration={refDecoration} />
-                          <CopyButton value={branchName} label="ref name" />
+                        <span
+                          key={`${refGroup.kind}:${refGroup.name}`}
+                          className="inline-flex items-center gap-0.5"
+                        >
+                          <RefPill group={refGroup} />
+                          {/* Copy what the pill shows: `main` for a branch (with
+                              or without remotes), `origin/feature` for a ref that
+                              only exists on one remote. */}
+                          <CopyButton value={refGroupLabel(refGroup).text} label="ref name" />
                           {/* ADR-0031: the compare affordance sits on the branch
                               pill it acts on, not in global chrome. Precedence: the
                               host's compare seam (an enabled button, host-owned

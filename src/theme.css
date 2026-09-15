@@ -112,14 +112,70 @@ mark {
   padding: 0 1px;
 }
 
-/* Ref decoration pills. One base class + a kind class per git ref flavour. */
+/* Ref decoration pills. One base class + a kind class per git ref flavour.
+   A pill is a flex line so its segments share one centre line and one height. */
 .ref-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.5;
   padding: 1px 7px;
   border-radius: 999px;
   border: 1px solid transparent;
+  white-space: nowrap;
+}
+/* A unified pill — a branch and the remotes that agree with it — is ONE chip
+   divided into segments: the branch name, then a remote per segment. Nothing is
+   drawn between them, because containment already says "same ref"; the up/down
+   arrow that used to sit there is git's own mark for *divergence*
+   (`%(upstream:trackshort)` keeps the two-direction form for a diverged
+   branch), so it claimed the opposite of what a same-commit group reports.
+   The padding moves from the chip onto the segments so the hairline divider
+   runs the chip's full height, and `overflow: hidden` keeps the last segment
+   inside the rounded end. */
+.ref-pill.ref-segmented {
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+.ref-pill.ref-segmented .ref-segment {
+  padding: 1px 7px;
+}
+/* The remote segments: subordinate to the branch name, which stays the subject
+   of the pill. The divider is mixed from the pill's own text colour, so it
+   holds for every ref kind and both themes without a second token. */
+.ref-segment-remote {
+  border-left: 1px solid color-mix(in srgb, currentColor 38%, transparent);
+  opacity: 0.72;
+  font-style: italic;
+}
+/* The checked-out branch, carrying its state instead of git's `HEAD -> `
+   plumbing text: the head colour it already had, plus a heavier name and a ring
+   — legible without hovering, and never colour alone. */
+.ref-pill.ref-checked-out {
+  font-weight: 700;
+  box-shadow: 0 0 0 1px color-mix(in srgb, currentColor 55%, transparent);
+}
+/* The row-level half of that signal — a lane-coloured ring before the row's ref
+   pills (the border colour is set inline from the row's lane). It lives in the
+   row, never on the SVG commit node, where the selection halo already owns the
+   ring shape. */
+.ref-head-dot {
+  /* Declared even though `CommitGraph` puts it in an inline-flex parent, where a
+     flex item's display is blown away anyway: the component is barrel-exported so
+     a host can mark HEAD on its own row, and in a plain block parent an inline
+     span ignores `width`, `height` and `flex` alike — the ring would paint as a
+     blob on the text baseline. */
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  flex: none;
+  margin-right: 1px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  cursor: help;
 }
 .ref-head {
   background: #1f6feb33;

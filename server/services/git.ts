@@ -145,6 +145,44 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
   }
 
   /**
+   * The repository's remote names, derived from its own remote-tracking refs.
+   *
+   * This is what the ref pills need to group a local branch with the remotes
+   * that agree with it, and it is read from `git for-each-ref refs/remotes`
+   * rather than guessed from an `origin/` prefix: remote names are arbitrary, so
+   * only git's own listing distinguishes the remote-tracking ref `fork/main`
+   * from a local branch named `feature/main`. Reading the *refs* (not
+   * `git remote`) is deliberate — only a remote with refs can ever appear in a
+   * decoration, so this list covers exactly the names that need classifying.
+   *
+   * There is no fallback on the read side either: an empty list is git's
+   * authoritative "no remote-tracking refs here", and the client classifies
+   * against it as such. So a failure here is not fatal but it is not free — the
+   * graph still renders, with every decoration read as a local branch under the
+   * qualified name git printed (`origin/main` as a branch called that), which is
+   * the pre-grouping rendering. It errs toward claiming no sync, never toward
+   * claiming one that does not exist.
+   */
+  async function readRemoteNames(repositoryPath: string): Promise<string[]> {
+    const { stdout, exitCode } = await runGit(repositoryPath, [
+      'for-each-ref',
+      '--format=%(refname:short)',
+      'refs/remotes',
+    ])
+    if (exitCode !== 0) return []
+
+    const remoteNames = new Set<string>()
+    for (const line of stdout.split('\n')) {
+      const shortRef = line.trim()
+      if (!shortRef) continue
+      const separatorIndex = shortRef.indexOf('/')
+      if (separatorIndex <= 0 || separatorIndex === shortRef.length - 1) continue
+      remoteNames.add(shortRef.slice(0, separatorIndex))
+    }
+    return [...remoteNames].sort((first, second) => first.localeCompare(second))
+  }
+
+  /**
    * Read the commit history of one listed repository via `git log --all
    * --topo-order`.
    */
@@ -155,17 +193,22 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
     const repository = await resolveRepository(repositoryRelativePath)
     if (!repository) return { ok: false, reason: 'unknown-repository' }
 
-    const { stdout, stderr, exitCode } = await runGit(join(servedRoot, repository.relativePath), [
-      ...COMMIT_LOG_ARGUMENTS,
-      '-n',
-      String(limit),
+    // The log and the remote names are independent reads the same response
+    // needs, so they run as one round trip rather than back to back.
+    const repositoryPath = join(servedRoot, repository.relativePath)
+    const [{ stdout, stderr, exitCode }, remotes] = await Promise.all([
+      runGit(repositoryPath, [...COMMIT_LOG_ARGUMENTS, '-n', String(limit)]),
+      readRemoteNames(repositoryPath),
     ])
 
     if (exitCode !== 0) {
       // A freshly-initialized repository has no refs yet — that is an empty
       // graph, not an error.
       if (/does not have any commits yet|bad default revision/i.test(stderr)) {
-        return { ok: true, log: { repository: repository.name, commits: [], truncated: false } }
+        return {
+          ok: true,
+          log: { repository: repository.name, commits: [], remotes, truncated: false },
+        }
       }
       return { ok: false, reason: 'git-failed', detail: stderr.trim() }
     }
@@ -173,7 +216,7 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
     const commits = parseGitLog(stdout)
     return {
       ok: true,
-      log: { repository: repository.name, commits, truncated: commits.length >= limit },
+      log: { repository: repository.name, commits, remotes, truncated: commits.length >= limit },
     }
   }
 
@@ -192,10 +235,13 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
     const repository = await resolveRepository(repositoryRelativePath)
     if (!repository) return { ok: false, reason: 'unknown-repository' }
 
-    const { stdout, stderr, exitCode } = await runGit(join(servedRoot, repository.relativePath), [
-      ...COMMIT_DETAIL_ARGUMENTS,
-      commitHash,
-      '--',
+    // Like the commit log, the detail carries the repository's remote names so
+    // the refs it reports can be classified and grouped by whoever renders them
+    // — the standalone commit tab has no other payload to learn them from.
+    const repositoryPath = join(servedRoot, repository.relativePath)
+    const [{ stdout, stderr, exitCode }, remotes] = await Promise.all([
+      runGit(repositoryPath, [...COMMIT_DETAIL_ARGUMENTS, commitHash, '--']),
+      readRemoteNames(repositoryPath),
     ])
 
     if (exitCode !== 0) {
@@ -213,7 +259,7 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
 
     const parsed = parseCommitDetail(stdout)
     if (!parsed) return { ok: false, reason: 'git-failed', detail: 'could not parse git show output' }
-    return { ok: true, detail: parsed }
+    return { ok: true, detail: { ...parsed, remotes } }
   }
 
   /**

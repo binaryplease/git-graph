@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { groupRefDecorations } from '../../shared/refGroup'
 import { createGitService } from './git'
 
 // Integration test against real git: build a scratch repository with a merged
@@ -77,6 +78,21 @@ beforeAll(() => {
   runGit(filesRepositoryPath, 'commit', '-m', 'feature-only commit')
   runGit(filesRepositoryPath, 'checkout', 'main')
 
+  // A repository with remote-tracking refs, for the ref-pill grouping: `main` is
+  // in sync with two remotes, `origin/published` has no local branch at all, and
+  // `local-only` never left this machine. The refs are written directly rather
+  // than fetched — `update-ref` produces exactly the refs/remotes layout a fetch
+  // would, without needing a second repository to fetch from.
+  const remotesRepositoryPath = join(scratchRoot, 'remotes-repo')
+  runGit(scratchRoot, 'init', '-b', 'main', remotesRepositoryPath)
+  runGit(remotesRepositoryPath, 'commit', '--allow-empty', '-m', 'shared commit')
+  runGit(remotesRepositoryPath, 'branch', 'local-only')
+  runGit(remotesRepositoryPath, 'remote', 'add', 'origin', 'https://example.invalid/repo.git')
+  runGit(remotesRepositoryPath, 'remote', 'add', 'upstream', 'https://example.invalid/up.git')
+  runGit(remotesRepositoryPath, 'update-ref', 'refs/remotes/origin/main', 'main')
+  runGit(remotesRepositoryPath, 'update-ref', 'refs/remotes/upstream/main', 'main')
+  runGit(remotesRepositoryPath, 'update-ref', 'refs/remotes/origin/published', 'main')
+
   // A repository with a dirty working tree, for the uncommitted-changes tests: a
   // committed base, then a modification, a deletion, and an untracked file left
   // uncommitted.
@@ -112,6 +128,7 @@ describe('createGitService', () => {
       { name: 'dirty-repo', relativePath: 'dirty-repo' },
       { name: 'empty-repo', relativePath: 'empty-repo' },
       { name: 'files-repo', relativePath: 'files-repo' },
+      { name: 'remotes-repo', relativePath: 'remotes-repo' },
       { name: 'sample-repo', relativePath: 'sample-repo' },
     ])
   })
@@ -154,7 +171,7 @@ describe('createGitService', () => {
     const result = await service.readCommitLog('empty-repo', { limit: 100 })
     expect(result).toEqual({
       ok: true,
-      log: { repository: 'empty-repo', commits: [], truncated: false },
+      log: { repository: 'empty-repo', commits: [], remotes: [], truncated: false },
     })
   })
 
@@ -172,6 +189,46 @@ describe('createGitService', () => {
       const result = await service.readCommitLog(hostileIdentifier, { limit: 10 })
       expect(result).toEqual({ ok: false, reason: 'unknown-repository' })
     }
+  })
+
+  test('reports the repository’s remote names alongside the log', async () => {
+    const service = createGitService({ rootAbsolutePath: scratchRoot })
+    const result = await service.readCommitLog('remotes-repo', { limit: 100 })
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+    expect(result.log.remotes).toEqual(['origin', 'upstream'])
+    // A repository with no remote-tracking refs reports none, rather than
+    // guessing that `origin` exists.
+    const withoutRemotes = await service.readCommitLog('sample-repo', { limit: 100 })
+    if (!withoutRemotes.ok) throw new Error(`expected ok, got ${withoutRemotes.reason}`)
+    expect(withoutRemotes.log.remotes).toEqual([])
+  })
+
+  test('real decorations plus the remote names group into one ref pill per ref', async () => {
+    const service = createGitService({ rootAbsolutePath: scratchRoot })
+    const result = await service.readCommitLog('remotes-repo', { limit: 100 })
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+
+    const commit = result.log.commits[0]!
+    // git decorates the single commit with every ref that points at it.
+    expect(commit.refs).toContain('HEAD -> main')
+    expect(commit.refs).toContain('origin/main')
+    expect(commit.refs).toContain('upstream/main')
+    expect(commit.refs).toContain('origin/published')
+    expect(commit.refs).toContain('local-only')
+
+    // Five decorations, three refs: `main` swallows both of its remotes, and
+    // neither the local-only branch nor the remote-only one is touched. (Compared
+    // as a set — the order git lists decorations in is git's business.)
+    const groups = groupRefDecorations(commit.refs, result.log.remotes)
+    const described = groups.map((group) => ({
+      kind: group.kind,
+      name: group.name,
+      remotes: group.remotes,
+    }))
+    expect(described).toHaveLength(3)
+    expect(described).toContainEqual({ kind: 'branch', name: 'main', remotes: ['origin', 'upstream'] })
+    expect(described).toContainEqual({ kind: 'branch', name: 'local-only', remotes: [] })
+    expect(described).toContainEqual({ kind: 'remote', name: 'published', remotes: ['origin'] })
   })
 })
 
@@ -247,6 +304,16 @@ describe('readCommitDetail', () => {
     )
     if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
     expect(result.detail.refs).toContain('HEAD -> main')
+    expect(result.detail.remotes).toEqual([])
+  })
+
+  test('carries the remote names too, so a standalone commit tab can group the refs', async () => {
+    const detailService = createGitService({ rootAbsolutePath: scratchRoot })
+    const log = await detailService.readCommitLog('remotes-repo', { limit: 10 })
+    if (!log.ok) throw new Error(`expected ok, got ${log.reason}`)
+    const result = await detailService.readCommitDetail('remotes-repo', log.log.commits[0]!.hash)
+    if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+    expect(result.detail.remotes).toEqual(['origin', 'upstream'])
   })
 
   test('reports a root commit as parentless', async () => {

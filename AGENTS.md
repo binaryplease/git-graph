@@ -61,7 +61,30 @@ consumers (standalone instance · shared package · nightshift-ui module):
     mhutchie/GitLens/GitKraken). Do not "improve" its behaviour without
     updating the regression fixture in `graphLayout.test.ts`, which pins the
     prototype-captured output.
-  - `gitLog.ts` — `git log` wire format + parser (unit separator `%x1f`).
+  - `gitLog.ts` — `git log` wire format + parser (unit separator `%x1f`). `%d`
+    decorations split on `", "`, never on the bare comma: a comma is legal in a
+    ref name, a space is not, so that is the only exact split — splitting on `,`
+    tears the tag `v1,origin/release` into a fragment shaped like a
+    remote-tracking ref, which `refGroup.ts` would then fold into an unrelated
+    branch's pill as a remote that agrees with it.
+  - `refGroup.ts` — folds a commit's `%d` decorations into one group per *ref
+    identity*, so a local branch and the remotes pointing at the same commit
+    render as one segmented pill (`main │ origin`) instead of one pill per
+    decoration.
+    Classification takes the repository's own remote names (`CommitLog.remotes`
+    / `CommitDetail.remotes`) rather than guessing an `origin/` prefix, which is
+    what tells the remote-tracking ref `fork/main` from a local `feature/main`.
+    The remote list is a **required** argument (and a required `CommitGraph`
+    prop) with no fallback: an empty list is git's authoritative "no remotes
+    here", so `origin/main` in such a repository is a local branch someone named
+    that way, and guessing otherwise would claim a sync with a ref that does not
+    exist. `HEAD -> x` likewise settles a case the short `%d` form cannot — HEAD
+    is only ever on a local branch, so a checked-out `origin/other` is local.
+    Grouping only ever sees one commit's decorations, so a diverged branch and
+    remote keep separate pills and no "synced" claim can be invented; ahead/
+    behind counts would need `%(upstream:track)` and are deliberately absent
+    (the shape leaves room for them per ADR-0029). Also owns the pill's display
+    parts (`refGroupLabel`, `refGroupTitle`) so both surfaces and a host agree.
   - `commitDetail.ts` — `git show` wire format + parser for a single commit
     (header + `--raw`/`--numstat` file block, zipped positionally). Merges use
     `-m --first-parent`.
@@ -84,6 +107,11 @@ consumers (standalone instance · shared package · nightshift-ui module):
   against git's own listings before it reaches the shell — repository
   identifiers against the repo listing, file paths against a commit's/
   comparison's own file list, and branch refs against `git for-each-ref`.
+  The log and the commit detail each also carry `remotes` — the repository's
+  remote names, read from its own `refs/remotes` with `for-each-ref` (only a
+  remote with refs can appear in a decoration) and returned alongside the refs
+  that need them, so the ref pills never guess at an `origin/` prefix and the
+  standalone commit tab needs no extra fetch to group them.
   Beyond the log/detail/file-diff routes it serves `GET /api/git/branches`
   (with default-branch resolution), `/api/git/compare` (branch-vs-base file
   list), `/api/git/compare/diff` (one file of a comparison), and
@@ -116,7 +144,10 @@ consumers (standalone instance · shared package · nightshift-ui module):
   out), `CommitDetailPanel.tsx` (changed files, copy-hash, parent navigation),
   `FileDiff.tsx` (one diff, unified or split by prop), `MultiFileDiffView.tsx`
   (file list on top + per-file diffs loaded lazily as each nears the viewport),
-  `UncommittedChangesRow.tsx` (the working-tree node above HEAD), plus shared
+  `UncommittedChangesRow.tsx` (the working-tree node above HEAD),
+  `RefPill.tsx` (one grouped ref — see `shared/refGroup.ts` — as a segmented
+  badge, the same one both the graph rows and the detail panel render, plus the
+  `CheckedOutMarker` ring that marks the HEAD row beside them), plus shared
   tokens in `components/fileStatus.tsx` and chrome in `DiffTabFrame.tsx`. The
   shells (`App.tsx` and the four pages) own all fetching; `lib/diffRoutes.ts` is
   the single descriptor for the diff-tab URLs (ADR-0026) that the panel builds
@@ -141,7 +172,8 @@ consumers (standalone instance · shared package · nightshift-ui module):
     the SVG for rows below the expansion; the layout algorithm is untouched.
 
 The render layer is importable by subpath — `package.json` `exports` maps
-`./components` (the fetch-free components), `./shared` (schema + layout + fuzzy),
+`./components` (the fetch-free components, ref pill included), `./shared`
+(schema + layout + ref grouping + fuzzy),
 `./highlighter` (`lib/highlighter.ts`), and `./theme.css`, so nightshift-ui can
 source-alias them (no proxy, no forked copy).
 
@@ -165,23 +197,64 @@ resolution and three-dot branch comparison (an unmerged fixture branch, since a
 merged one correctly compares empty), plus the working tree (a `dirty-repo`
 fixture with a modified, a deleted, an untracked text, and an untracked binary
 file — list, clean, and per-file diffs including the `--no-index` untracked case
-and the untracked-binary notice). The `git show`/`git diff` parsers
+and the untracked-binary notice), plus the remote names the ref pills classify
+against (a `remotes-repo` fixture whose remote-tracking refs are written with
+`update-ref`: `main` in sync with two remotes, one remote-only branch, one
+local-only branch, grouped end to end from real decorations). The `git show`/`git diff` parsers
 (`commitDetail.ts`, `fileDiff.ts`) and the route membership guards — path *and*
 ref — are covered too, and client components have DOM tests (`bunfig.toml`
 preloads happy-dom via `src/test/setup.ts`), including `MultiFileDiffView`'s
 lazy load behind a stubbed IntersectionObserver, `CommitGraph`'s inline
 `selectedDetail` slot, `UncommittedChangesRow`'s clean state and its two open
-seams (link vs in-app handler), and `detailLayout`'s schema default/fallback (ADR-0029). The standalone surface is
+seams (link vs in-app handler), and `detailLayout`'s schema default/fallback (ADR-0029).
+Ref grouping is covered on all three levels: `shared/refGroup.test.ts` for the
+pure classifier and folding (synced branch, several remotes, diverged
+branch/remote, remote-only, tag never folded, detached HEAD, slash-named
+remotes, a no-remotes repository whose local `origin/main` must not read as
+remote-tracking, a checked-out branch named like a remote ref, and a
+comma-bearing tag name that must not forge a remote onto another branch), then
+the same cases as pills on *both* rendering surfaces
+(`CommitGraph`'s rows and `CommitDetailPanel`'s refs row, where the unified pill
+must still offer exactly one compare affordance). Those pill tests pin the
+*rendering* too: the remote segments (`.ref-segment-remote`) a unified pill
+appends, the checked-out state class, that no surface prints `HEAD ->`, and
+`CommitGraph`'s row ring — present and lane-coloured on the HEAD row, named in
+its `aria-label`, absent on an unreferenced row and on a detached HEAD. The
+standalone surface is
 covered too: `services/port.test.ts` (probe/walk against real binds),
 `listen.test.ts` (`strict|auto` strategy, announced skips, span exhaustion),
 `bind-exposure.test.ts` (loopback-default / non-loopback-refusal, ADR-0037 §4),
 `cli/args.test.ts` (argv routing + flag parsing), and `scripts/dev-ports.test.ts`
 (env pinning + reassignment announcements).
-Currently 170 tests across 16 files.
+Currently 214 tests across 17 files.
 
 ## UX conventions
 
 - ADR-0019: fuzzy matches highlight the matched characters (`<mark>`).
+- Ref pills: one pill per ref *identity*, not per `%d` decoration. A branch that
+  agrees with its remotes names itself once and appends them as further segments
+  of the same chip — `main │ origin`, divided by a hairline and set subordinate,
+  with **no glyph between them**: containment already says "same ref", and the
+  up/down arrow that used to sit there is git's own mark for *divergence*
+  (`%(upstream:trackshort)` prints `=` in sync and keeps the two-direction form
+  for a diverged branch), so it asserted the opposite of what the pill reports.
+  A ref that exists on exactly one remote and nowhere locally keeps its qualified
+  name (`origin/feature`) and gains no segments. Pills only ever merge refs on
+  the same commit, so a diverged branch and remote stay two legible pills; the
+  tooltip always names the refs that went in, because a merged badge is a claim
+  the reader has to be able to check. Ahead/behind counts would need
+  `%(upstream:track)` and are deliberately absent — nothing in the pill implies a
+  slot for them.
+- The checked-out branch: **no `HEAD -> ` text** — that is raw `git log %d`
+  plumbing, and none of Git Graph, GitLens/GitKraken or VS Code's Source Control
+  Graph prints it. It reads as checked out two ways instead, both in
+  `RefPill.tsx`: the pill keeps the head colour and adds weight plus a ring
+  (`.ref-checked-out`), and `CheckedOutMarker` puts a small lane-coloured ring in
+  the row before the pills, naming the branch in its tooltip *and* its
+  `aria-label`. That ring is never drawn on the SVG commit node — `CommitGraph`
+  already rings the *selected* commit there, and a second ring would make
+  "selected" and "checked out" the same shape. A detached HEAD is on no branch,
+  so it leaves the row unmarked and speaks through its own `HEAD` pill.
 - ADR-0025: disabled controls stay visible and explain themselves (`title`/placeholder).
 - ADR-0016: no third-party runtime assets — everything is bundled.
 - ADR-0022: Tabler vectors, never emoji.

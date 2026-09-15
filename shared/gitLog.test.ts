@@ -75,4 +75,18 @@ describe('parseRefDecorations', () => {
   test('strips parentheses and trims entries', () => {
     expect(parseRefDecorations(' (HEAD -> main, feature/x)')).toEqual(['HEAD -> main', 'feature/x'])
   })
+
+  // Regression: a comma is a legal ref-name character, so splitting on the bare
+  // comma tore this tag into `tag: v1` plus a loose `origin/release`, which then
+  // looked exactly like a remote-tracking ref and was folded into the unrelated
+  // `release` branch's pill as a remote agreeing with it. git's separator is a
+  // comma *and a space*, and ref names cannot contain spaces, so the name stays
+  // whole and nothing is minted.
+  test('a comma inside a ref name is not a separator', () => {
+    expect(parseRefDecorations(' (HEAD -> main, tag: v1,origin/release, release)')).toEqual([
+      'HEAD -> main',
+      'tag: v1,origin/release',
+      'release',
+    ])
+  })
 })

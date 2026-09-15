@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import type { GitCommit } from '../../shared/git.schema'
 import { computeGraphLayout } from '../../shared/graphLayout'
 import { fuzzyHighlight, type FuzzyHighlight } from '../../shared/fuzzy'
-import { RefPill } from './RefPill'
+import { groupRefDecorations } from '../../shared/refGroup'
+import { CheckedOutMarker, RefPill } from './RefPill'
 
 // The reusable commit-graph view: commits in, SVG + rows out. It owns no data
 // fetching and no app chrome, so it can be lifted into another host
@@ -86,6 +87,17 @@ export type CommitGraphStats = {
 export type CommitGraphProps = {
   /** Commits in topological order (children before all of their parents). */
   commits: GitCommit[]
+  /**
+   * The repository's remote names (`CommitLog.remotes`), which arrive on the
+   * same payload as the commits. Ref decorations are grouped against them, so a
+   * branch and the remotes that agree with it render as one pill.
+   *
+   * Required, not optional: an empty array has to mean "this repository has no
+   * remotes", so there is no value that could stand for "the host did not say" —
+   * a pill would otherwise have to guess, and a guessed remote is a sync claim
+   * about a ref that may not exist.
+   */
+  remotes: string[]
   /** Fuzzy search query; matching rows highlight, the rest dim. */
   searchQuery?: string
   /** Reports derived numbers for host chrome (readouts). Pass a stable callback. */
@@ -106,6 +118,7 @@ export type CommitGraphProps = {
 
 export function CommitGraph({
   commits,
+  remotes,
   searchQuery = '',
   onStats,
   selectedHash = null,
@@ -121,15 +134,25 @@ export function CommitGraph({
         const subject = fuzzyHighlight(commit.subject, searchQuery)
         const hash = fuzzyHighlight(commit.hash, searchQuery)
         const author = fuzzyHighlight(commit.author, searchQuery)
+        // One pill per ref identity, not per decoration: a branch and the
+        // remotes pointing at the same commit are a single ref.
+        const refGroups = groupRefDecorations(commit.refs, remotes)
         return {
           commit,
           subject,
           hash,
           author,
+          refGroups,
+          // The branch HEAD is on at this commit, if any — what the row's
+          // checked-out ring names. A detached HEAD is on no branch, so it
+          // leaves the row unmarked and speaks through its own `HEAD` pill.
+          checkedOutBranch:
+            refGroups.find((refGroup) => refGroup.kind === 'branch' && refGroup.isHead)?.name ??
+            null,
           matched: subject.matched || hash.matched || author.matched,
         }
       }),
-    [commits, searchQuery],
+    [commits, remotes, searchQuery],
   )
 
   const matchCount = searchQuery
@@ -237,7 +260,7 @@ export function CommitGraph({
       <div ref={rowsContainerRef} className="relative">
         {/* One wrapper per row keeps children[row] stable for scrollIntoView even
             when the inline detail is inserted after the selected row. */}
-        {rows.map(({ commit, subject, hash, author, matched }, row) => (
+        {rows.map(({ commit, subject, hash, author, refGroups, checkedOutBranch, matched }, row) => (
           <div key={`${commit.hash}-${row}`}>
             <button
               type="button"
@@ -248,10 +271,19 @@ export function CommitGraph({
               style={{ height: ROW_HEIGHT, paddingLeft: graphContentLeft(layout.laneCount) }}
               onClick={() => onSelectCommit?.(commit)}
             >
-              {commit.refs.length > 0 && (
-                <span className="inline-flex shrink-0 gap-1.5">
-                  {commit.refs.map((refDecoration) => (
-                    <RefPill key={refDecoration} refDecoration={refDecoration} />
+              {refGroups.length > 0 && (
+                <span className="inline-flex shrink-0 items-center gap-1.5">
+                  {/* The checked-out ring leads the row's refs, in the row and
+                      not on the SVG node — that ring marks the *selected*
+                      commit, and two rings of one shape would blur the two. */}
+                  {checkedOutBranch !== null && (
+                    <CheckedOutMarker
+                      branchName={checkedOutBranch}
+                      color={laneColor(layout.placements[row]!.lane)}
+                    />
+                  )}
+                  {refGroups.map((refGroup) => (
+                    <RefPill key={`${refGroup.kind}:${refGroup.name}`} group={refGroup} />
                   ))}
                 </span>
               )}

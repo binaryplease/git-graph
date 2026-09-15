@@ -24,6 +24,7 @@ const commitDetail: CommitDetail = {
   fullHash: 'abc1234000000000000000000000000000000000',
   parents: [],
   refs: [],
+  remotes: [],
   author: 'Test',
   authorEmail: 'test@example.invalid',
   authorDate: '2026-07-20T10:00:00+02:00',
@@ -341,5 +342,72 @@ describe('CommitDetailPanel full-commit and compare affordances', () => {
     expect(screen.queryByRole('button', { name: /compare v1\.0 against/i })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /compare feature against the default branch/i }))
     expect(compared).toEqual(['feature'])
+  })
+})
+
+// The panel is the second surface that renders ref pills, and it groups them
+// from the same shared function the graph rows use — the detail payload carries
+// the repository's remote names for exactly this.
+describe('CommitDetailPanel ref pills', () => {
+  const pillTexts = () =>
+    [...document.querySelectorAll('.ref-pill')].map((pill) => pill.textContent ?? '')
+  const remoteSegments = () =>
+    [...document.querySelectorAll('.ref-segment-remote')].map((segment) => segment.textContent ?? '')
+
+  test('a branch and its remotes on this commit render one segmented pill per remote', () => {
+    renderPanel({
+      detail: {
+        ...commitDetail,
+        refs: ['HEAD -> main', 'origin/main', 'upstream/main', 'tag: v1.0'],
+        remotes: ['origin', 'upstream'],
+      },
+    })
+    // The same rendering the graph rows show: segments, no `HEAD -> `, no glyph.
+    expect(pillTexts()).toEqual(['main origin upstream', 'v1.0'])
+    expect(remoteSegments()).toEqual(['origin', 'upstream'])
+    const [headPill] = [...document.querySelectorAll('.ref-pill')]
+    expect(headPill!.className).toContain('ref-checked-out')
+    expect(document.body.innerHTML).not.toContain('HEAD -&gt;')
+    // A merged badge stays a checkable claim: the tooltip names its refs.
+    expect(headPill!.getAttribute('title')).toBe(
+      'local branch main (checked out) — in sync with origin/main, upstream/main',
+    )
+  })
+
+  test('a detached HEAD keeps its own pill and no checked-out state', () => {
+    renderPanel({
+      detail: { ...commitDetail, refs: ['HEAD', 'main'], remotes: ['origin'] },
+    })
+    expect(pillTexts()).toEqual(['HEAD', 'main'])
+    const [headPill] = [...document.querySelectorAll('.ref-pill')]
+    expect(headPill!.className).toContain('ref-head')
+    expect(headPill!.className).not.toContain('ref-checked-out')
+  })
+
+  test('the unified pill keeps the compare affordance, once, under the bare branch name', () => {
+    renderPanel({
+      detail: {
+        ...commitDetail,
+        refs: ['HEAD -> feature', 'origin/feature'],
+        remotes: ['origin'],
+      },
+    })
+    expect(pillTexts()).toEqual(['feature origin'])
+    const compareLinks = screen.getAllByRole('link', {
+      name: /compare feature against the default branch/i,
+    }) as HTMLAnchorElement[]
+    expect(compareLinks).toHaveLength(1)
+    expect(compareLinks[0]!.getAttribute('href')).toBe('/compare?repo=demo&head=feature')
+  })
+
+  test('a diverged remote keeps its own pill and is not comparable', () => {
+    renderPanel({
+      detail: { ...commitDetail, refs: ['origin/feature'], remotes: ['origin'] },
+    })
+    expect(pillTexts()).toEqual(['origin/feature'])
+    expect(screen.queryByRole('link', { name: /compare .* against the default branch/i })).toBeNull()
+    // The copy control stays on the pill (ADR-0025) and offers the ref as it is
+    // shown, remote and all.
+    expect(screen.getByRole('button', { name: /ref name/i })).toBeTruthy()
   })
 })

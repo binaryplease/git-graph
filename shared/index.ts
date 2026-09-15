@@ -6,8 +6,12 @@
 //                   FileDiff, branch listing, comparison, and their schemas.
 //   - graphLayout — the lane-sweep algorithm and its input/output types, in case
 //                   a host renders the geometry itself.
+//   - refGroup    — folding a commit's ref decorations into one group per ref
+//                   identity (a local branch and its agreeing remotes become one
+//                   pill), plus the classifier the grouping runs on.
 //   - fuzzy       — the subsequence matcher with matched-character segments
 //                   (ADR-0019), the same one the graph highlights with.
 export * from './git.schema'
 export * from './graphLayout'
+export * from './refGroup'
 export * from './fuzzy'
