@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the inline variant never showed the subject at all, so a subject too long for its
   commit row was unreadable anywhere in the expanded view. The sidebar keeps its subject
   header; the title line repeating inside the message block there is accepted. No API,
-  layout-algorithm, or diff-view change. ([#10])
+  layout-algorithm, or diff-view change. ([#10], [#11])
 
 - The monospace font is now Fira Code, self-hosted via `@fontsource-variable/fira-code`
   (variable weight 300–700, woff2 per unicode subset, bundled — no font CDN, ADR-0016).
@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   given (ADR-0027). `@git-diff-view/react` hardcodes `Menlo, Consolas, monospace` as an
   inline style on its table wrappers, so `theme.css` overrides those four classes with
   `!important` — otherwise the diff body kept a font that resolves nowhere on Linux and
-  fell back to the generic `monospace` while the chrome around it changed.
+  fell back to the generic `monospace` while the chrome around it changed. ([#11])
 
 ## [0.2.0] — 2026-09-15
 
@@ -121,3 +121,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#6]: https://github.com/binaryplease/git-graph/pull/6
 [#9]: https://github.com/binaryplease/git-graph/pull/9
 [#10]: https://github.com/binaryplease/git-graph/issues/10
+[#11]: https://github.com/binaryplease/git-graph/pull/11
