@@ -301,6 +301,67 @@ describe('CommitDetailPanel layout variant', () => {
   })
 })
 
+// Issue #10: the expanded commit reads metadata → message → changed files in
+// both variants, and the message is the one place the full title line is
+// readable (the commit row above truncates it).
+describe('CommitDetailPanel commit message', () => {
+  const longSubject =
+    'refactor(panel): put the commit metadata above the message so a long subject is readable somewhere'
+  // Blank lines and indentation are the part that must survive rendering.
+  const bodyWithParagraphs =
+    'The first paragraph explains why.\n\nThe second one lists the steps:\n\n    git show --stat\n    git log --oneline\n\nAnd a closing line.'
+  const fullMessage = `${longSubject}\n\n${bodyWithParagraphs}`
+
+  const detailWithMessage: CommitDetail = {
+    ...commitDetail,
+    subject: longSubject,
+    body: bodyWithParagraphs,
+  }
+
+  /** The message block is the panel's only <pre> — no file diff is disclosed here. */
+  const messageBlock = () => document.querySelector('pre') as HTMLPreElement
+  /** The metadata block is the panel's only <dl>. */
+  const metadataList = () => document.querySelector('dl') as HTMLElement
+  const filesChangedHeading = () => screen.getByRole('heading', { name: /files changed/ })
+
+  const isBefore = (first: Element, second: Element) =>
+    Boolean(first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING)
+
+  for (const variant of ['inline', 'sidebar'] as const) {
+    test(`the ${variant} variant renders the whole message verbatim, title line included`, () => {
+      renderPanel({ detail: detailWithMessage, variant })
+      // Character for character: the title, the blank lines, the indentation.
+      expect(messageBlock().textContent).toBe(fullMessage)
+    })
+
+    test(`the ${variant} variant reads metadata, then message, then changed files`, () => {
+      renderPanel({ detail: detailWithMessage, variant })
+      expect(isBefore(metadataList(), messageBlock())).toBe(true)
+      expect(isBefore(messageBlock(), filesChangedHeading())).toBe(true)
+    })
+  }
+
+  test('the title line carries weight of its own inside the message', () => {
+    renderPanel({ detail: detailWithMessage, variant: 'inline' })
+    const titleLine = messageBlock().querySelector('strong')
+    expect(titleLine?.textContent).toBe(longSubject)
+  })
+
+  test('the sidebar keeps its subject header above the metadata as well', () => {
+    renderPanel({ detail: detailWithMessage, variant: 'sidebar' })
+    const header = screen.getByRole('heading', { name: longSubject })
+    expect(isBefore(header, metadataList())).toBe(true)
+    // The repeat inside the message block is accepted (issue #10, out of scope).
+    expect(messageBlock().textContent).toBe(fullMessage)
+  })
+
+  test('a commit with no body still shows its title line under the metadata', () => {
+    renderPanel({ detail: { ...commitDetail, subject: longSubject, body: '' }, variant: 'inline' })
+    expect(messageBlock().textContent).toBe(longSubject)
+    expect(isBefore(metadataList(), messageBlock())).toBe(true)
+  })
+})
+
 describe('CommitDetailPanel full-commit and compare affordances', () => {
   test('the file list links to the whole commit’s diff in a new tab', () => {
     renderPanel()

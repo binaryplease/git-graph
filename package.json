@@ -35,6 +35,7 @@
   },
   "dependencies": {
     "@elysiajs/openapi": "^1.4.15",
+    "@fontsource-variable/fira-code": "^5.3.0",
     "@git-diff-view/react": "0.1.7",
     "@git-diff-view/shiki": "0.1.7",
     "@tabler/icons-react": "^3.44.0",

@@ -58,7 +58,7 @@
             '';
             outputHashMode = "recursive";
             outputHashAlgo = "sha256";
-            outputHash = "sha256-BIWdlrN5TYUsLIneDSOtI6ScKl6FG8a1UdnxvM+7tfI=";
+            outputHash = "sha256-bZI6Rpdq/+8gl8X4LSc3V0KypSGxM4U907hAvLoESlo=";
           };
 
           git-graph = pkgs.stdenv.mkDerivation {
