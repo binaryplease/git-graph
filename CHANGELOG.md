@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The monospace font is now Fira Code, self-hosted via `@fontsource-variable/fira-code`
+  (variable weight 300–700, woff2 per unicode subset, bundled — no font CDN, ADR-0016).
+  `--font-mono` in `src/theme.css` names it ahead of the previous system stack, which
+  stays as the fallback while the face loads. The `@font-face` import lives in
+  `theme.css` rather than `index.css` so an embedding host that imports
+  `git-graph/theme.css` gets the font, not just a token pointing at one it was never
+  given (ADR-0027). `@git-diff-view/react` hardcodes `Menlo, Consolas, monospace` as an
+  inline style on its table wrappers, so `theme.css` overrides those four classes with
+  `!important` — otherwise the diff body kept a font that resolves nowhere on Linux and
+  fell back to the generic `monospace` while the chrome around it changed.
+
 ## [0.2.0] — 2026-09-15
 
 ### Changed
