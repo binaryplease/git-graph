@@ -168,7 +168,8 @@ consumers (standalone instance · shared package · nightshift-ui module):
   whole commit), `ComparePage` (`/compare`, a branch against a base), and
   `WorkingTreePage` (`/working`, uncommitted changes vs HEAD). Every
   rendering piece is fetch-free — `CommitGraph.tsx` (commits in, SVG + rows
-  out), `CommitDetailPanel.tsx` (changed files, copy-hash, parent navigation),
+  out), `CommitDetailPanel.tsx` (metadata, the verbatim commit message, changed
+  files, copy-hash, parent navigation — in that order),
   `FileDiff.tsx` (one diff, unified or split by prop), `MultiFileDiffView.tsx`
   (file list on top + per-file diffs loaded lazily as each nears the viewport),
   `UncommittedChangesRow.tsx` (the working-tree node above HEAD),
@@ -203,7 +204,11 @@ consumers (standalone instance · shared package · nightshift-ui module):
     (`useDetailLayout`, default `inline`) with `DetailLayoutToggle.tsx`.
     `CommitDetailPanel` takes a `variant` (`inline` | `sidebar`) + `headerActions`
     seam (ADR-0027) and `CommitGraph` a `selectedDetail` inline slot that offsets
-    the SVG for rows below the expansion; the layout algorithm is untouched.
+    the SVG for rows below the expansion; the layout algorithm is untouched. The
+    variant drives the *frame*, never the body: both read metadata → message →
+    changed files (ADR-0027 — the invariant is the detail, not the container),
+    and only the sidebar's titled header differs, repeating the subject the
+    inline variant leaves to the commit row above it.
 
 The render layer is importable by subpath — `package.json` `exports` maps
 `./components` (the fetch-free components, ref pill included), `./shared`
@@ -253,6 +258,10 @@ preloads happy-dom via `src/test/setup.ts`), including `MultiFileDiffView`'s
 lazy load behind a stubbed IntersectionObserver, `CommitGraph`'s inline
 `selectedDetail` slot, `UncommittedChangesRow`'s clean state and its two open
 seams (link vs in-app handler), and `detailLayout`'s schema default/fallback (ADR-0029).
+`CommitDetailPanel`'s message block is pinned on both variants: the block order
+(metadata before message before files, asserted as document position, not as
+text) and the message read back character for character against the message that
+went in, so a lost blank line or a swallowed indent fails.
 Ref grouping is covered on all three levels: `shared/refGroup.test.ts` for the
 pure classifier and folding (synced branch, several remotes, diverged
 branch/remote, remote-only, tag never folded, detached HEAD, slash-named
@@ -283,7 +292,7 @@ covered too: `services/port.test.ts` (probe/walk against real binds),
 `bind-exposure.test.ts` (loopback-default / non-loopback-refusal, ADR-0037 §4),
 `cli/args.test.ts` (argv routing + flag parsing), and `scripts/dev-ports.test.ts`
 (env pinning + reassignment announcements).
-Currently 233 tests across 18 files.
+Currently 240 tests across 18 files.
 
 ## UX conventions
 
@@ -333,6 +342,16 @@ Currently 233 tests across 18 files.
   `index.html` avoids a flash.
 - Commit detail (ADR-0031): opens inline beneath the selected row by default,
   with a persisted panel-header toggle back to the docked right sidebar.
+- Commit detail order: metadata (commit · author · dates · parents · refs), then
+  the commit message, then the changed files — the same in both variants. The
+  identifying facts are short and scannable and read first; the message runs to
+  whatever length it has below them. It is rendered **verbatim** — the title line
+  included, blank lines and indentation preserved — because the commit row above
+  can only show the subject `truncate`d, and before this the inline variant
+  dropped the subject entirely, leaving a long one unreadable anywhere. The title
+  line carries weight but is never re-wrapped or re-punctuated: the block's text
+  is built as one string and sliced, so what renders is what git stored. The
+  sidebar's header keeps the subject too; that repeat is accepted.
 - Diff tabs (ADR-0031): a changed file, a whole commit, and a branch (against
   the default branch unless a base is chosen) each open in a standalone tab —
   via cmd/ctrl/middle-click on the file row, or the visible external-link /

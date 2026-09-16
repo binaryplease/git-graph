@@ -36,12 +36,47 @@ function formatCommitDate(isoDate: string) {
   }
 }
 
+/**
+ * The commit message as git stores it: the subject line, then the body below a
+ * blank line. `%b` arrives with its trailing newlines already stripped, so the
+ * join is the only thing that has to be re-made — everything inside it (blank
+ * lines, indentation) is passed through untouched.
+ */
+function commitMessageText(subject: string, body: string) {
+  if (!body) return subject
+  if (!subject) return body
+  return `${subject}\n\n${body}`
+}
+
 function MetadataRow({ label, children }: { label: string; children: ReactNode }) {
   return (
     <>
       <dt className="py-1 text-faint">{label}</dt>
       <dd className="min-w-0 py-1">{children}</dd>
     </>
+  )
+}
+
+/**
+ * The commit message, verbatim: the title line — the one thing the commit row
+ * above can only show `truncate`d — and every blank line and indentation below
+ * it. The title is split off only to carry weight; the block's text is built as
+ * one string and sliced, so what renders is exactly {@link commitMessageText}.
+ * Sits between the metadata and the changed files in both variants; the sidebar
+ * header repeats the subject, which is accepted (issue #10).
+ */
+function CommitMessage({ subject, body }: { subject: string; body: string }) {
+  const message = commitMessageText(subject, body)
+  if (!message) return null
+  const firstLineBreak = message.indexOf('\n')
+  const titleLine = firstLineBreak === -1 ? message : message.slice(0, firstLineBreak)
+  const remainder = firstLineBreak === -1 ? '' : message.slice(firstLineBreak)
+
+  return (
+    <pre className="mt-2.5 border-t border-line pt-2.5 font-sans text-[12.5px] leading-relaxed break-words whitespace-pre-wrap text-dim">
+      <strong className="font-semibold text-fg">{titleLine}</strong>
+      {remainder}
+    </pre>
   )
 }
 
@@ -411,20 +446,11 @@ export function CommitDetailPanel({
 
         {detail !== null && (
           <>
-            {detail.body && (
-              <pre className="mb-3 font-sans text-[12.5px] leading-relaxed whitespace-pre-wrap text-dim">
-                {detail.body}
-              </pre>
-            )}
-
-            {/* The rule above the metadata only earns its place as a separator
-                from the free-text message above it — with no body it sits right
-                under the header and reads as a redundant line, so drop it then. */}
-            <dl
-              className={`grid grid-cols-[5.5rem_minmax(0,1fr)] items-baseline gap-x-2 text-[12px] ${
-                detail.body ? 'border-t border-line pt-1.5' : ''
-              }`}
-            >
+            {/* Issue #10: metadata first, then the message, then the files. The
+                identifying facts are the short, scannable part and belong at the
+                top of the block; the free-text message reads below them and runs
+                to whatever length it has, with the changed files after it. */}
+            <dl className="grid grid-cols-[5.5rem_minmax(0,1fr)] items-baseline gap-x-2 text-[12px]">
               <MetadataRow label="commit">
                 <span className="inline-flex min-w-0 items-center gap-1">
                   {/* The full 40-character hash is the widest thing in the
@@ -545,6 +571,8 @@ export function CommitDetailPanel({
                 </MetadataRow>
               )}
             </dl>
+
+            <CommitMessage subject={detail.subject} body={detail.body} />
 
             <h3 className="mt-3.5 flex items-baseline gap-2 border-t border-line pt-2.5 text-[12px] text-faint">
               <span>

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The expanded commit detail now reads **metadata → commit message → changed files** in
+  both variants, and the message renders verbatim including its title line — blank lines
+  and indentation preserved. Previously the message body came first, the metadata second,
+  and the inline variant never showed the subject at all, so a subject too long for its
+  commit row was unreadable anywhere in the expanded view. The sidebar keeps its subject
+  header; the title line repeating inside the message block there is accepted. No API,
+  layout-algorithm, or diff-view change. ([#10])
+
 - The monospace font is now Fira Code, self-hosted via `@fontsource-variable/fira-code`
   (variable weight 300–700, woff2 per unicode subset, bundled — no font CDN, ADR-0016).
   `--font-mono` in `src/theme.css` names it ahead of the previous system stack, which
@@ -112,3 +120,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#1]: https://github.com/binaryplease/git-graph/issues/1
 [#6]: https://github.com/binaryplease/git-graph/pull/6
 [#9]: https://github.com/binaryplease/git-graph/pull/9
+[#10]: https://github.com/binaryplease/git-graph/issues/10
