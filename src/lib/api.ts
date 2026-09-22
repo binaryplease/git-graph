@@ -1,5 +1,10 @@
 import {
+  MUTATION_REQUEST_HEADER,
+  MUTATION_REQUEST_HEADER_VALUE,
+} from '../../shared/mutationRequest'
+import {
   BranchListSchema,
+  CheckoutResultSchema,
   CommitDetailSchema,
   CommitLogSchema,
   CompareSummarySchema,
@@ -7,6 +12,8 @@ import {
   RepositoryListSchema,
   WorkingTreeSchema,
   type BranchList,
+  type CheckoutResult,
+  type CheckoutTarget,
   type CommitDetail,
   type CommitLog,
   type CompareSummary,
@@ -15,8 +22,8 @@ import {
   type WorkingTree,
 } from '../../shared/git.schema'
 
-async function requestJson(path: string): Promise<unknown> {
-  const response = await fetch(path)
+async function requestJson(path: string, init?: RequestInit): Promise<unknown> {
+  const response = await fetch(path, init)
   if (!response.ok) {
     let message = `request failed with status ${response.status}`
     try {
@@ -103,4 +110,24 @@ export async function fetchWorkingFileDiff(
 ): Promise<FileDiff> {
   const query = new URLSearchParams({ repo: repositoryRelativePath, path: filePath })
   return FileDiffSchema.parse(await requestJson(`/api/git/working/diff?${query}`))
+}
+
+/**
+ * Check out a branch, tag, or commit — a write to the repository on disk. It
+ * carries the header and JSON body every mutating route requires
+ * (`shared/mutationRequest.ts`), which is what a foreign page cannot send. On a
+ * refusal the thrown message is the server's, which for a checkout git refused
+ * is git's own stderr.
+ */
+export async function checkout(repositoryRelativePath: string, target: CheckoutTarget): Promise<CheckoutResult> {
+  return CheckoutResultSchema.parse(
+    await requestJson('/api/git/checkout', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        [MUTATION_REQUEST_HEADER]: MUTATION_REQUEST_HEADER_VALUE,
+      },
+      body: JSON.stringify({ repo: repositoryRelativePath, target }),
+    }),
+  )
 }

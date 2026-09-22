@@ -54,12 +54,13 @@ const app = new Elysia()
           version: SERVICE_VERSION,
           description:
             'A local git commit-graph viewer. Lists the repositories at a served root and ' +
-            'returns their parsed commit history for graph rendering.\n\n' +
+            'returns their parsed commit history for graph rendering, and checks out a ' +
+            'branch, tag, or commit on request — the one route that changes a repository.\n\n' +
             'Discovery entrypoint: `GET /api` (ADR-0020).',
         },
         tags: [
           { name: 'system', description: 'Discovery, liveness, and metadata endpoints.' },
-          { name: 'git', description: 'Repository listing and commit history.' },
+          { name: 'git', description: 'Repository listing, commit history, and checkout.' },
         ],
       },
     }),

@@ -27,10 +27,13 @@ import {
   WORKING_SUMMARY_ARGUMENTS,
   isBinaryNoIndexPatch,
 } from '../../shared/workingTree'
+import { checkoutArguments, type ResolvedCheckout } from '../../shared/checkout'
 import { MAX_FILE_CHANGES, parseCommitFileChanges } from '../../shared/commitDetail'
 import { FIELD_SEPARATOR } from '../../shared/gitLog'
 import type {
   BranchList,
+  CheckoutResult,
+  CheckoutTarget,
   CommitDetail,
   CommitFileChange,
   CommitLog,
@@ -93,6 +96,18 @@ export type ReadWorkingFileDiffResult =
   | { ok: true; diff: FileDiff }
   | { ok: false; reason: ReadWorkingFileDiffFailureReason; detail?: string }
 
+export type CheckoutFailureReason =
+  | 'unknown-repository'
+  | 'unknown-ref'
+  | 'unknown-commit'
+  | 'invalid-hash'
+  | 'checkout-refused'
+  | 'git-failed'
+
+export type CheckoutOutcome =
+  | { ok: true; result: CheckoutResult }
+  | { ok: false; reason: CheckoutFailureReason; detail?: string }
+
 // Hashes reach `git show` as an argument, so they are re-checked here even
 // though the route schema already validates them — the service is the boundary
 // that owns what may be handed to the shell.
@@ -100,6 +115,9 @@ const COMMIT_HASH_PATTERN = /^[0-9a-fA-F]{4,40}$/
 
 /** Local branches live here; stripped from a full `%(refname)` to get the branch name. */
 const LOCAL_BRANCH_PREFIX = 'refs/heads/'
+
+/** Tags live here; a tag checkout names the full refname so it has one reading. */
+const TAG_PREFIX = 'refs/tags/'
 
 /** git's line-per-entry stdout as trimmed, non-empty lines. */
 const nonEmptyLines = (stdout: string) =>
@@ -814,6 +832,110 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
     }
   }
 
+  /**
+   * Turn an untrusted checkout target into something git may be handed, or say
+   * why not. Every branch of this holds the same **membership** line as the read
+   * routes — the caller's string is only ever used to *find* one of git's own:
+   *
+   * - a branch must be a name `for-each-ref refs/heads` lists, and the name
+   *   handed on is that listing's string;
+   * - a tag must be a name `for-each-ref refs/tags` lists, and is handed on as
+   *   the full `refs/tags/…` refname, so a branch of the same name cannot win;
+   * - a commit hash must resolve to a commit *whose own full hash starts with
+   *   it* (a hex-looking branch name would otherwise resolve to its tip) and that
+   *   is reachable from a ref or from HEAD — the history `git log --all` shows —
+   *   and is handed on as that full hash.
+   */
+  async function resolveCheckout(
+    repositoryPath: string,
+    target: CheckoutTarget,
+  ): Promise<{ ok: true; checkout: ResolvedCheckout } | { ok: false; reason: CheckoutFailureReason; detail?: string }> {
+    switch (target.kind) {
+      case 'branch': {
+        const data = await readBranchData(repositoryPath)
+        if (!data.ok) return { ok: false, reason: 'git-failed', detail: data.detail }
+        const branchName = data.branchNames.find((name) => name === target.name)
+        if (branchName === undefined) {
+          return { ok: false, reason: 'unknown-ref', detail: `no such branch: ${target.name}` }
+        }
+        return { ok: true, checkout: { kind: 'branch', name: branchName } }
+      }
+      case 'tag': {
+        const tags = await runGit(repositoryPath, ['for-each-ref', '--format=%(refname)', 'refs/tags'])
+        if (tags.exitCode !== 0) return { ok: false, reason: 'git-failed', detail: tags.stderr.trim() }
+        const tagRef = nonEmptyLines(tags.stdout).find((refName) => refName === `${TAG_PREFIX}${target.name}`)
+        if (tagRef === undefined) return { ok: false, reason: 'unknown-ref', detail: `no such tag: ${target.name}` }
+        return { ok: true, checkout: { kind: 'detach', revision: tagRef } }
+      }
+      case 'commit': {
+        if (!COMMIT_HASH_PATTERN.test(target.hash)) return { ok: false, reason: 'invalid-hash' }
+        const resolved = await runGit(repositoryPath, [
+          'rev-parse',
+          '--verify',
+          '--quiet',
+          '--end-of-options',
+          `${target.hash}^{commit}`,
+        ])
+        const fullHash = resolved.stdout.trim()
+        if (resolved.exitCode !== 0 || !fullHash.startsWith(target.hash.toLowerCase())) {
+          return { ok: false, reason: 'unknown-commit' }
+        }
+        const [containingRef, headAncestry] = await Promise.all([
+          runGit(repositoryPath, ['for-each-ref', '--count=1', '--format=%(refname)', '--contains', fullHash]),
+          runGit(repositoryPath, ['merge-base', '--is-ancestor', fullHash, 'HEAD']),
+        ])
+        const isInHistory =
+          (containingRef.exitCode === 0 && containingRef.stdout.trim() !== '') || headAncestry.exitCode === 0
+        if (!isInHistory) return { ok: false, reason: 'unknown-commit' }
+        return { ok: true, checkout: { kind: 'detach', revision: fullHash } }
+      }
+    }
+  }
+
+  /**
+   * Check out a branch, a tag, or a commit in one listed repository — the first
+   * git write the service performs. The target is resolved through
+   * {@link resolveCheckout}'s membership guards before git sees any of it, and
+   * the switch itself is `git switch` (see `shared/checkout.ts`), never a shell.
+   *
+   * git's own safety stays in charge: a switch that would overwrite uncommitted
+   * changes is refused by git, and that refusal comes back as `checkout-refused`
+   * carrying git's stderr verbatim, so the user reads git's reason rather than
+   * ours.
+   */
+  async function checkout(repositoryRelativePath: string, target: CheckoutTarget): Promise<CheckoutOutcome> {
+    const repository = await resolveRepository(repositoryRelativePath)
+    if (!repository) return { ok: false, reason: 'unknown-repository' }
+
+    const repositoryPath = join(servedRoot, repository.relativePath)
+    const resolved = await resolveCheckout(repositoryPath, target)
+    if (!resolved.ok) return resolved
+
+    const switched = await runGit(repositoryPath, checkoutArguments(resolved.checkout))
+    if (switched.exitCode !== 0) {
+      return { ok: false, reason: 'checkout-refused', detail: switched.stderr.trim() || switched.stdout.trim() }
+    }
+
+    // The symref is read in full and stripped, never `--short`: a local branch
+    // `origin/main` beside `refs/remotes/origin/main` shortens to
+    // `heads/origin/main`, a name no listing or decoration uses.
+    const [headResult, branchResult] = await Promise.all([
+      runGit(repositoryPath, ['rev-parse', '--short', '--verify', 'HEAD']),
+      runGit(repositoryPath, ['symbolic-ref', '-q', 'HEAD']),
+    ])
+    const headRef = branchResult.exitCode === 0 ? branchResult.stdout.trim() : ''
+    return {
+      ok: true,
+      result: {
+        repository: repository.name,
+        head: headResult.stdout.trim(),
+        branch: headRef.startsWith(LOCAL_BRANCH_PREFIX) ? headRef.slice(LOCAL_BRANCH_PREFIX.length) : null,
+        // git reports a successful switch on stderr; keep only its first line.
+        message: (switched.stderr.trim() || switched.stdout.trim()).split('\n')[0] ?? '',
+      },
+    }
+  }
+
   return {
     listRepositories,
     readCommitLog,
@@ -824,6 +946,7 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
     readCompareFileDiff,
     readWorkingTree,
     readWorkingFileDiff,
+    checkout,
   }
 }
 

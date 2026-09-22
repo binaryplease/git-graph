@@ -11,7 +11,14 @@
 //                   pill), plus the classifier the grouping runs on.
 //   - fuzzy       — the subsequence matcher with matched-character segments
 //                   (ADR-0019), the same one the graph highlights with.
+//   - gitActions  — the git-action context menu as data: which entries a commit
+//                   row or ref pill offers, why one cannot apply, and what a
+//                   checkout says before it runs.
+//   - mutationRequest — the header a mutating request must carry, so a host
+//                   posting to the write routes sends what the server checks.
 export * from './git.schema'
 export * from './graphLayout'
 export * from './refGroup'
 export * from './fuzzy'
+export * from './gitActions'
+export * from './mutationRequest'

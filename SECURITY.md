@@ -41,9 +41,15 @@ What **is** in scope:
   `GIT_GRAPH_ALLOWED_HOSTS` acknowledgement**, or to defeat that gate.
 - **Cross-site / browser-side attacks** that let a page you visit reach the
   local service and exfiltrate repository contents (e.g. DNS rebinding, a
-  missing origin check).
-- **Anything that writes.** The service is read-only; a route that mutates a
-  repository is a bug with security weight.
+  missing origin check). DNS rebinding specifically is a known open gap until
+  the Host-header guard (issue #5) lands.
+- **Any write other than a confirmed checkout.** `POST /api/git/checkout` is the
+  only route that changes a repository. Any other way to mutate a repository is a
+  bug with security weight. So is any way to make the checkout act on a ref or
+  commit git's own listings do not name, or to trigger it from a foreign web
+  page. The checkout requires the `X-Git-Graph-Action: 1` header and a JSON
+  body, and refuses a request the browser marks cross-site. A way around that
+  gate is in scope.
 
 ## Deploying it beyond loopback
 
@@ -52,4 +58,5 @@ Binding a non-loopback address is a fatal startup error unless you set
 protection: if you set it, you are asserting that an authenticating reverse
 proxy fronts the service and the port is not directly reachable. Exposing the
 service without one publishes the full contents of every repository under the
-served root to anyone who can reach it.
+served root to anyone who can reach it, and lets them check out refs in those
+repositories.

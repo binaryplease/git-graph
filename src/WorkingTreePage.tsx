@@ -4,6 +4,7 @@ import type { CommitFileChange, WorkingTree } from '../shared/git.schema'
 import { fetchWorkingFileDiff, fetchWorkingTree } from './lib/api'
 import { loadHighlighter } from './lib/highlighter'
 import { parseWorkingParams } from './lib/diffRoutes'
+import { useRepositoryChanges } from './lib/repositoryChanges'
 import { useTheme } from './lib/theme'
 import { DiffTabFrame } from './components/DiffTabFrame'
 import { MultiFileDiffView } from './components'
@@ -21,6 +22,14 @@ export function WorkingTreePage() {
   const [working, setWorking] = useState<WorkingTree | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Bumped when the graph tab announces a change to this repository (a
+  // checkout), so this listing refetches instead of showing a working tree that
+  // no longer exists.
+  const [repositoryVersion, setRepositoryVersion] = useState(0)
+  useRepositoryChanges(
+    params.repositoryRelativePath,
+    useCallback(() => setRepositoryVersion((version) => version + 1), []),
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -38,7 +47,7 @@ export function WorkingTreePage() {
     return () => {
       cancelled = true
     }
-  }, [params])
+  }, [params, repositoryVersion])
 
   useEffect(() => {
     const label = params.repositoryRelativePath || '(root)'
@@ -86,6 +95,9 @@ export function WorkingTreePage() {
         <p className="text-faint">{isLoading ? 'Reading the working tree…' : 'No working tree loaded.'}</p>
       ) : (
         <MultiFileDiffView
+          // Remounted on a change: each section loads its diff once, so a diff
+          // read before the checkout would otherwise outlive it.
+          key={repositoryVersion}
           files={working.files}
           filesTruncated={working.filesTruncated}
           loadFileDiff={loadFileDiff}

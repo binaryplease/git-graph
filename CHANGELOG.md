@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A git-action context menu, with checkout as the first write the service has
+  ever had.** Right-click a commit row or a ref pill, or press `Shift+F10` or the
+  context-menu key on a focused row. The menu can check out a local branch, a
+  tag, or a commit. A tag or commit checkout detaches `HEAD`, and the menu warns
+  about that before running it. The menu also copies the full or short hash, opens
+  the commit in the `/commit` tab, and compares a branch against the default
+  branch. Entries that cannot apply stay visible, disabled, with the reason as
+  their title (ADR-0025). Every checkout states the command and the repository
+  and runs only on confirm. After it succeeds, the graph, the working-tree row and
+  any open `/working` tab refetch. If git refuses (for example, uncommitted
+  changes it would overwrite), its stderr is shown verbatim. `POST
+  /api/git/checkout` holds the read routes' membership line: the branch against
+  `refs/heads`, the tag against `refs/tags`, the commit against the history
+  reachable from a ref or `HEAD`. It also requires the `X-Git-Graph-Action: 1`
+  header and a JSON body, and refuses browser requests marked cross-site, so a
+  foreign page cannot trigger it. The menu (`GitActionMenu`) and its confirmation
+  (`ConfirmActionDialog`) are fetch-free barrel components. Their wording
+  (`buildGitMenuSections`, `describeCheckout`) lives in `git-graph/shared`.
+  `CommitGraph` gains an `onContextMenu` seam, and `GitCommit` gains `fullHash`
+  (git `%H`). ([#2])
+
 ### Changed
 
 - The expanded commit detail now reads **metadata → commit message → changed files** in
@@ -118,6 +141,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.2.0]: https://github.com/binaryplease/git-graph/compare/v0.1.0...v0.2.0
 
 [#1]: https://github.com/binaryplease/git-graph/issues/1
+[#2]: https://github.com/binaryplease/git-graph/issues/2
 [#6]: https://github.com/binaryplease/git-graph/pull/6
 [#9]: https://github.com/binaryplease/git-graph/pull/9
 [#10]: https://github.com/binaryplease/git-graph/issues/10

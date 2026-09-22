@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from 'react'
+import { Fragment, type MouseEvent, type ReactNode } from 'react'
 import { refGroupLabel, refGroupTitle, type RefGroup } from '../../shared/refGroup'
 
 // Git ref decorations render on two surfaces — graph rows and the commit
@@ -29,6 +29,12 @@ export type RefPillProps = {
   /** One grouped ref — build these with `groupRefDecorations(commit.refs, remotes)`. */
   group: RefGroup
   children?: ReactNode
+  /**
+   * Opens the host's context menu for this ref. When set, a right-click on the
+   * pill opens it instead of the browser's menu, and does not bubble on to the
+   * row the pill sits in — the pill's menu leads with the pill's own ref.
+   */
+  onContextMenu?: (event: MouseEvent<HTMLElement>) => void
 }
 
 /**
@@ -49,7 +55,7 @@ export type RefPillProps = {
  * agreement with anything — it is simply that remote's branch, so it keeps the
  * qualified name git printed (`origin/feature`) and gains no segments.
  */
-export function RefPill({ group, children }: RefPillProps) {
+export function RefPill({ group, children, onContextMenu }: RefPillProps) {
   const { text, markerRemotes } = refGroupLabel(group)
   // A checked-out branch reads as HEAD, the way it did before its remotes were
   // folded in — the marker is additive, it never replaces the kind.
@@ -68,7 +74,18 @@ export function RefPill({ group, children }: RefPillProps) {
   const trailing = isSegmented && children ? <span className="ref-segment">{children}</span> : children
 
   return (
-    <span className={className.join(' ')} title={refGroupTitle(group)}>
+    <span
+      className={className.join(' ')}
+      title={refGroupTitle(group)}
+      onContextMenu={
+        onContextMenu &&
+        ((event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          onContextMenu(event)
+        })
+      }
+    >
       {isSegmented ? <span className="ref-segment">{text}</span> : text}
       {markerRemotes.map((remoteName) => (
         <Fragment key={remoteName}>
@@ -131,6 +148,8 @@ export type CommitRefRowProps = {
    * so it reads as belonging to the branch line drawn beside it.
    */
   laneColor: string
+  /** Opens the host's context menu for one of the pills; see {@link RefPillProps.onContextMenu}. */
+  onRefContextMenu?: (group: RefGroup, event: MouseEvent<HTMLElement>) => void
 }
 
 /**
@@ -151,7 +170,7 @@ export type CommitRefRowProps = {
  * nightshift-ui's panel — and a host aligning its own non-commit row beside the
  * graph gets the same cluster instead of a hand-rolled dot that drifts from it.
  */
-export function CommitRefRow({ groups, laneColor }: CommitRefRowProps) {
+export function CommitRefRow({ groups, laneColor, onRefContextMenu }: CommitRefRowProps) {
   if (groups.length === 0) return null
   const checkedOutBranch =
     groups.find((group) => group.kind === 'branch' && group.isHead)?.name ?? null
@@ -165,7 +184,11 @@ export function CommitRefRow({ groups, laneColor }: CommitRefRowProps) {
         <CheckedOutMarker branchName={checkedOutBranch} color={laneColor} />
       )}
       {groups.map((group) => (
-        <RefPill key={`${group.kind}:${group.name}`} group={group} />
+        <RefPill
+          key={`${group.kind}:${group.name}`}
+          group={group}
+          onContextMenu={onRefContextMenu && ((event) => onRefContextMenu(group, event))}
+        />
       ))}
     </span>
   )
