@@ -55,19 +55,30 @@ export const RepositorySummarySchema = z.object({
     .string()
     .default('')
     .describe(
-      'Repository location relative to the served root — a direct child name, or the empty ' +
-        'string when the served root itself is the repository. This is the identifier the ' +
-        'commit-log endpoint accepts.',
+      'The repository identifier every other endpoint accepts as `repo`. Serving a root, it is the ' +
+        'location relative to that root — a direct child name, or the empty string when the root ' +
+        'itself is the repository. Serving a repositories file (`GIT_GRAPH_REPOSITORIES_FILE`), it is ' +
+        'the absolute path the file names, normalised.',
     ),
 })
 export type RepositorySummary = z.infer<typeof RepositorySummarySchema>
 
 export const RepositoryListSchema = z.object({
-  rootPath: z.string().describe('Absolute path of the served root on the local machine.'),
+  rootPath: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe(
+      'Absolute path of the served root on the local machine, or null when the server serves the ' +
+        'explicit list of a repositories file instead of scanning a root (ADR-0024).',
+    ),
   repositories: z
     .array(RepositorySummarySchema)
     .default([])
-    .describe('Git repositories found at the served root or as its direct children, sorted by name.'),
+    .describe(
+      'The served git repositories — found at the served root or as its direct children, or named by ' +
+        'the repositories file — sorted by name.',
+    ),
 })
 export type RepositoryList = z.infer<typeof RepositoryListSchema>
 
@@ -93,7 +104,7 @@ export const CommitLogQuerySchema = z.object({
   repo: z
     .string()
     .default('')
-    .describe('Repository identifier: the `relativePath` from the repository listing.'),
+    .describe('Repository identifier: a `relativePath` from the repository listing.'),
   limit: z.coerce
     .number()
     .int()
@@ -168,7 +179,7 @@ export const CommitDetailQuerySchema = z.object({
   repo: z
     .string()
     .default('')
-    .describe('Repository identifier: the `relativePath` from the repository listing.'),
+    .describe('Repository identifier: a `relativePath` from the repository listing.'),
   hash: z
     .string()
     .regex(/^[0-9a-fA-F]{4,40}$/, 'must be an abbreviated or full hexadecimal commit hash')
@@ -224,7 +235,7 @@ export const FileDiffQuerySchema = z.object({
   repo: z
     .string()
     .default('')
-    .describe('Repository identifier: the `relativePath` from the repository listing.'),
+    .describe('Repository identifier: a `relativePath` from the repository listing.'),
   hash: z
     .string()
     .regex(/^[0-9a-fA-F]{4,40}$/, 'must be an abbreviated or full hexadecimal commit hash')
@@ -271,7 +282,7 @@ export const BranchListSchema = z.object({
 export type BranchList = z.infer<typeof BranchListSchema>
 
 export const BranchListQuerySchema = z.object({
-  repo: z.string().default('').describe('Repository identifier: the `relativePath` from the repository listing.'),
+  repo: z.string().default('').describe('Repository identifier: a `relativePath` from the repository listing.'),
 })
 export type BranchListQuery = z.infer<typeof BranchListQuerySchema>
 
@@ -298,7 +309,7 @@ export const CompareSummarySchema = z.object({
 export type CompareSummary = z.infer<typeof CompareSummarySchema>
 
 export const CompareQuerySchema = z.object({
-  repo: z.string().default('').describe('Repository identifier: the `relativePath` from the repository listing.'),
+  repo: z.string().default('').describe('Repository identifier: a `relativePath` from the repository listing.'),
   head: z
     .string()
     .regex(GIT_REF_NAME_PATTERN, 'must be a git branch name')
@@ -352,7 +363,7 @@ export const WorkingTreeSchema = z.object({
 export type WorkingTree = z.infer<typeof WorkingTreeSchema>
 
 export const WorkingTreeQuerySchema = z.object({
-  repo: z.string().default('').describe('Repository identifier: the `relativePath` from the repository listing.'),
+  repo: z.string().default('').describe('Repository identifier: a `relativePath` from the repository listing.'),
 })
 export type WorkingTreeQuery = z.infer<typeof WorkingTreeQuerySchema>
 
@@ -395,7 +406,7 @@ export const CheckoutTargetSchema = z
 export type CheckoutTarget = z.infer<typeof CheckoutTargetSchema>
 
 export const CheckoutRequestSchema = z.object({
-  repo: z.string().default('').describe('Repository identifier: the `relativePath` from the repository listing.'),
+  repo: z.string().default('').describe('Repository identifier: a `relativePath` from the repository listing.'),
   target: CheckoutTargetSchema,
 })
 export type CheckoutRequest = z.infer<typeof CheckoutRequestSchema>

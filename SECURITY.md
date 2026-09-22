@@ -27,12 +27,20 @@ vulnerabilities:
   every repository under the served root — commit history, diffs, and
   working-tree contents. The loopback bind *is* the access control.
 - **The served root is readable in full.** Listing and reading the git
-  repositories under the configured root is the entire purpose of the program.
+  repositories under the configured root — or, with `GIT_GRAPH_REPOSITORIES_FILE`
+  set, the repositories that file names — is the entire purpose of the program.
+- **Whoever can write the repositories file decides what is served.** It is
+  operator configuration, re-read on every request, exactly like the environment;
+  keep it where only the operator (or the supervising host) can write it.
+- **A configured embedding origin reads and checks out like the git-graph page
+  itself.** Naming an origin in `GIT_GRAPH_ALLOWED_ORIGINS` grants that page CORS
+  reads and the checkout; that is the point of the setting.
 
 What **is** in scope:
 
-- **Any escape from the served root** — reading a path, repository, or ref
-  outside it. Every untrusted input is re-validated by membership against git's
+- **Any escape from the served set** — reading a path, repository, or ref
+  outside the served root, or outside the repositories file when one is set. A
+  request can only name a member; any way for it to widen the set is in scope. Every untrusted input is re-validated by membership against git's
   own listings (repository ids against the repo listing, file paths against a
   commit's own file list, refs against `git for-each-ref`) before it reaches a
   subprocess. A way past any of those guards is a vulnerability.
@@ -43,14 +51,18 @@ What **is** in scope:
   local service and exfiltrate repository contents (e.g. DNS rebinding, a
   missing origin check). Every request is answered only for a loopback `Host`
   or a name in `GIT_GRAPH_ALLOWED_HOSTS` (the DNS-rebinding guard, issue #5), so
-  a way to get an answer for any other name is in scope.
+  a way to get an answer for any other name is in scope. CORS headers are
+  granted only to an `Origin` that exactly equals an entry of
+  `GIT_GRAPH_ALLOWED_ORIGINS` (none by default); a grant to any other origin is in
+  scope.
 - **Any write other than a confirmed checkout.** `POST /api/git/checkout` is the
   only route that changes a repository. Any other way to mutate a repository is a
   bug with security weight. So is any way to make the checkout act on a ref or
   commit git's own listings do not name, or to trigger it from a foreign web
   page. The checkout requires the `X-Git-Graph-Action: 1` header and a JSON
   body, and refuses a request the browser marks cross-site or whose `Origin`
-  names a host the server does not answer for. A way around that gate is in
+  names a host the server does not answer for — unless that `Origin` is exactly
+  one listed in `GIT_GRAPH_ALLOWED_ORIGINS`. A way around that gate is in
   scope.
 
 ## Deploying it beyond loopback

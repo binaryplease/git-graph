@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { groupRefDecorations } from '../../shared/refGroup'
 import { createGitService } from './git'
+import { createListedRepositorySet, createServedRootRepositorySet } from './repository-set'
 
 // Integration test against real git: build a scratch repository with a merged
 // feature branch and assert the service returns the parsed, topologically
@@ -161,11 +162,11 @@ afterAll(() => {
 
 describe('createGitService', () => {
   test('throws at startup on a nonexistent root', () => {
-    expect(() => createGitService({ rootAbsolutePath: '/no/such/place' })).toThrow()
+    expect(() => createGitService({ repositories: createServedRootRepositorySet('/no/such/place') })).toThrow()
   })
 
   test('lists repositories that are direct children of the served root', async () => {
-    const service = createGitService({ rootAbsolutePath: scratchRoot })
+    const service = createGitService({ repositories: createServedRootRepositorySet(scratchRoot) })
     const { rootPath, repositories } = await service.listRepositories()
     expect(rootPath).toBe(scratchRoot)
     expect(repositories).toEqual([
@@ -180,13 +181,49 @@ describe('createGitService', () => {
   })
 
   test('lists the served root itself when it is a repository', async () => {
-    const service = createGitService({ rootAbsolutePath: join(scratchRoot, 'sample-repo') })
+    const service = createGitService({ repositories: createServedRootRepositorySet(join(scratchRoot, 'sample-repo')) })
     const { repositories } = await service.listRepositories()
     expect(repositories).toEqual([{ name: 'sample-repo', relativePath: '' }])
   })
 
+  // A repositories file (GIT_GRAPH_REPOSITORIES_FILE): the identifier is the
+  // absolute path, and the file — not the directory layout — is the membership.
+  test('serves exactly the repositories a repositories file names, by absolute path', async () => {
+    const listDirectory = mkdtempSync(join(tmpdir(), 'git-graph-listed-'))
+    try {
+      const listFile = join(listDirectory, 'repositories')
+      const samplePath = join(scratchRoot, 'sample-repo')
+      const outsidePath = join(scratchRoot, 'files-repo')
+      writeFileSync(listFile, `${samplePath}\n`)
+      const service = createGitService({ repositories: createListedRepositorySet(listFile) })
+
+      expect(await service.listRepositories()).toEqual({
+        rootPath: null,
+        repositories: [{ name: 'sample-repo', relativePath: samplePath }],
+      })
+      const log = await service.readCommitLog(samplePath, { limit: 10 })
+      expect(log.ok && log.log.repository).toBe('sample-repo')
+
+      // A sibling on disk the file does not name, the root-relative form of the
+      // named one, and a traversal back to it are all outside the set.
+      for (const identifier of [outsidePath, 'sample-repo', '', `${outsidePath}/../sample-repo`]) {
+        const refused = await service.readCommitLog(identifier, { limit: 10 })
+        expect(refused).toEqual({ ok: false, reason: 'unknown-repository' })
+      }
+      // `feature-x` exists there, so a checkout that slipped past membership
+      // would move HEAD off `main`.
+      const symbolicHead = () => Bun.spawnSync(['git', '-C', outsidePath, 'symbolic-ref', 'HEAD']).stdout.toString().trim()
+      expect(symbolicHead()).toBe('refs/heads/main')
+      const checkout = await service.checkout(outsidePath, { kind: 'branch', name: 'feature-x' })
+      expect(checkout).toEqual({ ok: false, reason: 'unknown-repository' })
+      expect(symbolicHead()).toBe('refs/heads/main')
+    } finally {
+      rmSync(listDirectory, { recursive: true, force: true })
+    }
+  })
+
   test('reads a parsed, topologically ordered commit log with merge and refs', async () => {
-    const service = createGitService({ rootAbsolutePath: scratchRoot })
+    const service = createGitService({ repositories: createServedRootRepositorySet(scratchRoot) })
     const result = await service.readCommitLog('sample-repo', { limit: 100 })
     if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
 
@@ -213,7 +250,7 @@ describe('createGitService', () => {
   })
 
   test('a repository without commits yields an empty log, not an error', async () => {
-    const service = createGitService({ rootAbsolutePath: scratchRoot })
+    const service = createGitService({ repositories: createServedRootRepositorySet(scratchRoot) })
     const result = await service.readCommitLog('empty-repo', { limit: 100 })
     expect(result).toEqual({
       ok: true,
@@ -222,7 +259,7 @@ describe('createGitService', () => {
   })
 
   test('truncates at the requested limit and flags it', async () => {
-    const service = createGitService({ rootAbsolutePath: scratchRoot })
+    const service = createGitService({ repositories: createServedRootRepositorySet(scratchRoot) })
     const result = await service.readCommitLog('sample-repo', { limit: 2 })
     if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
     expect(result.log.commits).toHaveLength(2)
@@ -230,7 +267,7 @@ describe('createGitService', () => {
   })
 
   test('rejects identifiers that are not in the listing (no path traversal)', async () => {
-    const service = createGitService({ rootAbsolutePath: scratchRoot })
+    const service = createGitService({ repositories: createServedRootRepositorySet(scratchRoot) })
     for (const hostileIdentifier of ['../somewhere', 'sample-repo/../..', 'nope']) {
       const result = await service.readCommitLog(hostileIdentifier, { limit: 10 })
       expect(result).toEqual({ ok: false, reason: 'unknown-repository' })
@@ -238,7 +275,7 @@ describe('createGitService', () => {
   })
 
   test('reports the repository’s remote names alongside the log', async () => {
-    const service = createGitService({ rootAbsolutePath: scratchRoot })
+    const service = createGitService({ repositories: createServedRootRepositorySet(scratchRoot) })
     const result = await service.readCommitLog('remotes-repo', { limit: 100 })
     if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
     expect(result.log.remotes).toEqual(['origin', 'upstream'])
@@ -250,7 +287,7 @@ describe('createGitService', () => {
   })
 
   test('real decorations plus the remote names group into one ref pill per ref', async () => {
-    const service = createGitService({ rootAbsolutePath: scratchRoot })
+    const service = createGitService({ repositories: createServedRootRepositorySet(scratchRoot) })
     const result = await service.readCommitLog('remotes-repo', { limit: 100 })
     if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
 
@@ -282,7 +319,7 @@ describe('createGitService', () => {
   // remote name actually is, and the grouper — which matches names longest-first
   // precisely so a slash-named remote works — was left unable to receive one.
   test('a slash-named remote is reported whole, and an unfetched one not at all', async () => {
-    const service = createGitService({ rootAbsolutePath: scratchRoot })
+    const service = createGitService({ repositories: createServedRootRepositorySet(scratchRoot) })
     const result = await service.readCommitLog('slash-remote-repo', { limit: 100 })
     if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
     // Not `fork`: that would split the ref into a remote and a branch
@@ -306,7 +343,7 @@ describe('createGitService', () => {
   // when a local `origin/main` would make the short form ambiguous. Cutting that
   // at the first slash reported a remote named `remotes` and dropped `origin`.
   test('a local branch colliding with a remote-tracking ref does not forge a remote named `remotes`', async () => {
-    const service = createGitService({ rootAbsolutePath: scratchRoot })
+    const service = createGitService({ repositories: createServedRootRepositorySet(scratchRoot) })
     const result = await service.readCommitLog('ambiguous-remote-repo', { limit: 100 })
     if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
     expect(result.log.remotes).toEqual(['origin'])
@@ -318,7 +355,7 @@ describe('createGitService', () => {
   // be pinned on the command line for these to come back as anything the pills
   // can classify.
   test('decorations arrive short whatever `log.decorate` says', async () => {
-    const service = createGitService({ rootAbsolutePath: scratchRoot })
+    const service = createGitService({ repositories: createServedRootRepositorySet(scratchRoot) })
     const result = await service.readCommitLog('remotes-repo', { limit: 100 })
     if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
     const commit = result.log.commits[0]!
@@ -329,7 +366,7 @@ describe('createGitService', () => {
 })
 
 describe('readCommitDetail', () => {
-  const service = () => createGitService({ rootAbsolutePath: scratchRoot })
+  const service = () => createGitService({ repositories: createServedRootRepositorySet(scratchRoot) })
 
   /** Look up a commit of files-repo by subject, the way the UI looks it up by row. */
   async function hashOfCommit(subject: string) {
@@ -404,7 +441,7 @@ describe('readCommitDetail', () => {
   })
 
   test('carries the remote names too, so a standalone commit tab can group the refs', async () => {
-    const detailService = createGitService({ rootAbsolutePath: scratchRoot })
+    const detailService = createGitService({ repositories: createServedRootRepositorySet(scratchRoot) })
     const log = await detailService.readCommitLog('remotes-repo', { limit: 10 })
     if (!log.ok) throw new Error(`expected ok, got ${log.reason}`)
     const result = await detailService.readCommitDetail('remotes-repo', log.log.commits[0]!.hash)
@@ -440,7 +477,7 @@ describe('readCommitDetail', () => {
 })
 
 describe('readFileDiff', () => {
-  const service = () => createGitService({ rootAbsolutePath: scratchRoot })
+  const service = () => createGitService({ repositories: createServedRootRepositorySet(scratchRoot) })
 
   async function hashOfCommit(subject: string) {
     const log = await service().readCommitLog('files-repo', { limit: 100 })
@@ -541,7 +578,7 @@ describe('readFileDiff', () => {
 })
 
 describe('readBranches', () => {
-  const service = () => createGitService({ rootAbsolutePath: scratchRoot })
+  const service = () => createGitService({ repositories: createServedRootRepositorySet(scratchRoot) })
 
   test('lists local branches with the default flagged and sorted first', async () => {
     const result = await service().readBranches('files-repo')
@@ -582,7 +619,7 @@ describe('readBranches', () => {
 })
 
 describe('readCompareSummary', () => {
-  const service = () => createGitService({ rootAbsolutePath: scratchRoot })
+  const service = () => createGitService({ repositories: createServedRootRepositorySet(scratchRoot) })
 
   test('shows what a branch adds relative to its merge base with the default', async () => {
     // feature-x branched off main's tip and added c.txt. A three-dot compare
@@ -627,7 +664,7 @@ describe('readCompareSummary', () => {
 })
 
 describe('readCompareFileDiff', () => {
-  const service = () => createGitService({ rootAbsolutePath: scratchRoot })
+  const service = () => createGitService({ repositories: createServedRootRepositorySet(scratchRoot) })
 
   test('returns the file’s patch and blobs across the merge-base comparison', async () => {
     const result = await service().readCompareFileDiff('files-repo', 'feature-x', '', 'c.txt')
@@ -656,7 +693,7 @@ describe('readCompareFileDiff', () => {
 })
 
 describe('readWorkingTree', () => {
-  const service = () => createGitService({ rootAbsolutePath: scratchRoot })
+  const service = () => createGitService({ repositories: createServedRootRepositorySet(scratchRoot) })
 
   test('lists modified, deleted, and untracked files, sorted by path', async () => {
     const result = await service().readWorkingTree('dirty-repo')
@@ -692,7 +729,7 @@ describe('readWorkingTree', () => {
 })
 
 describe('readWorkingFileDiff', () => {
-  const service = () => createGitService({ rootAbsolutePath: scratchRoot })
+  const service = () => createGitService({ repositories: createServedRootRepositorySet(scratchRoot) })
 
   test('diffs a modified file: HEAD blob on the old side, worktree content on the new', async () => {
     const result = await service().readWorkingFileDiff('dirty-repo', 'kept.txt')
@@ -753,7 +790,7 @@ describe('readWorkingFileDiff', () => {
 // switch over uncommitted changes comes back with git's stderr, the changes
 // intact.
 describe('checkout', () => {
-  const service = () => createGitService({ rootAbsolutePath: scratchRoot })
+  const service = () => createGitService({ repositories: createServedRootRepositorySet(scratchRoot) })
   let fixtureCount = 0
 
   const gitOutput = (repositoryPath: string, ...gitArguments: string[]) =>

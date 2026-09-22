@@ -424,7 +424,7 @@ export function App() {
                 // ADR-0025: disabled controls explain why, never vanish.
                 title={
                   repositories.length === 0
-                    ? 'no git repositories found at the served root — set GIT_GRAPH_ROOT'
+                    ? 'no git repositories served — set GIT_GRAPH_ROOT or GIT_GRAPH_REPOSITORIES_FILE'
                     : undefined
                 }
                 onChange={(event) => setSelectedRepository(event.target.value)}
@@ -485,7 +485,13 @@ export function App() {
               {loadError}
             </p>
           )}
-          {loadError === null && repositoryList !== null && repositories.length === 0 && (
+          {loadError === null && repositoryList !== null && repositories.length === 0 && repositoryList.rootPath === null && (
+            <p className="px-4 py-6 text-faint">
+              None of the paths in the server's repositories file (
+              <code className="font-mono text-dim">GIT_GRAPH_REPOSITORIES_FILE</code>) is a git repository.
+            </p>
+          )}
+          {loadError === null && repositoryList !== null && repositories.length === 0 && repositoryList.rootPath !== null && (
             <p className="px-4 py-6 text-faint">
               No git repositories found under{' '}
               <code className="font-mono text-dim">{repositoryList.rootPath}</code>. Point the server

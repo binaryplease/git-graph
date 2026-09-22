@@ -65,6 +65,14 @@ worse than one that stops.
 Running the server directly works too: `bun server/index.ts ~/projects`, or set
 `GIT_GRAPH_ROOT`.
 
+To serve an exact set of repositories instead — wherever they live on disk — set
+`GIT_GRAPH_REPOSITORIES_FILE` to a file listing their absolute paths, one per
+line (`#` comments and blank lines are ignored). The root is then not scanned at
+all, the repository identifier (`repo=`) becomes the absolute path, and the file
+is re-read on every request, so editing it changes what is served without a
+restart. A named path that is not a git repository is left out; a relative path,
+or a file that cannot be read, is a fatal startup error.
+
 ## What it shows
 
 - An SVG **commit graph** with per-lane colours, hollow merge nodes, and curved
@@ -125,7 +133,8 @@ own server. A reverse proxy that passes its public host name through in `Host`
 (Caddy does by default) therefore needs that name in `GIT_GRAPH_ALLOWED_HOSTS`
 even when git-graph itself binds loopback.
 
-Only repositories the server itself discovered are ever passed to git. Every
+Only repositories the server itself discovered — or that the operator's
+repositories file names — are ever passed to git. Every
 untrusted input is re-validated by membership against git's own listings —
 repository ids against the repo listing, file paths against a commit's own file
 list, refs against `git for-each-ref` — and nothing is interpolated into a
@@ -140,6 +149,17 @@ CORS preflight the server never answers. A browser request marked
 `Sec-Fetch-Site: cross-site`, or whose `Origin` names a host the server does not
 answer for, is refused outright. A DNS-rebound page never gets this far: the
 Host check above refuses it first.
+
+**Embedding hosts** are the one deliberate exception, and they are off by
+default. `GIT_GRAPH_ALLOWED_ORIGINS` names the exact origins
+(`http://127.0.0.1:3115` — scheme, host, port, as a browser writes `Origin`) of
+pages that mount the graph and talk to this server across origins. Those origins,
+and only those, get CORS headers (so their browser lets them read responses and
+grants the checkout's preflight) and may send the checkout as `same-site` or
+`cross-site`. Nothing else is relaxed: the custom header, the JSON body, the Host
+check, and the membership checks all still apply, and an unlisted origin is
+refused exactly as before. A malformed entry is a fatal startup error. The
+contract a host follows is in [`docs/embedding-host.md`](docs/embedding-host.md).
 
 See [`SECURITY.md`](SECURITY.md) for the full threat model and how to report a
 vulnerability.
@@ -166,6 +186,12 @@ graph without forking it:
 Every component takes its data as props and does no fetching of its own; the
 host owns the requests. The package is not published to npm — consume it by
 source alias (Vite `resolve.alias`) or a git dependency.
+
+A host can also use git-graph's own server as its backend instead of
+re-implementing the git layer: launch it with `GIT_GRAPH_REPOSITORIES_FILE` (the
+repositories the host knows) and `GIT_GRAPH_ALLOWED_ORIGINS` (the host page's
+origins), and fetch the API cross-origin — reads and checkout alike. See
+[`docs/embedding-host.md`](docs/embedding-host.md).
 
 ## Development
 

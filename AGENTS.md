@@ -1,7 +1,8 @@
 # git-graph — AGENTS.md
 
 A **local git commit-graph viewer**: a standalone web service that lists the
-git repositories at a served root and renders their commit DAGs, and — its one
+git repositories at a served root (or the exact set a repositories file names)
+and renders their commit DAGs, and — its one
 write — checks out a branch, tag, or commit from a context menu on the graph. Sibling of
 `binp-file-explorer` in shape and conventions (local-machine service-first;
 later embeddable in nightshift-ui as a module).
@@ -140,8 +141,18 @@ consumers (standalone instance · shared package · nightshift-ui module):
   - `mutationRequest.ts` — the header (`X-Git-Graph-Action: 1`) every mutating
     request carries, shared by the client that sends it and the guard that checks
     it.
-- `server/` — Elysia service. `services/git.ts` scans the served root and
-  shells out to git. Everything untrusted is re-validated by **membership**
+- `server/` — Elysia service. `services/git.ts` shells out to git for the
+  repositories `services/repository-set.ts` says are served (its own module,
+  ADR-0032 — it depends on the filesystem and the operator's configuration, not
+  on git): by default the served root (the root itself plus its direct children,
+  identifier = root-relative path), or, with `GIT_GRAPH_REPOSITORIES_FILE` set,
+  exactly the absolute paths that file names, one per line (identifier = the
+  normalised absolute path; the root is not scanned at all). The file is re-read
+  on every lookup so a supervising host can change the set without a restart;
+  a missing file or a relative path fails the boot, and one that turns malformed
+  at runtime serves nothing rather than a guessed subset. Whoever can write the
+  file decides the set, like whoever sets the environment — a request can only
+  name a member, never widen it. Everything untrusted is re-validated by **membership**
   against git's own listings before it reaches the shell — repository
   identifiers against the repo listing, file paths against a commit's/
   comparison's own file list, and branch refs against `git for-each-ref`.
@@ -160,7 +171,8 @@ consumers (standalone instance · shared package · nightshift-ui module):
   repository holding both `refs/heads/origin/main` and `refs/remotes/origin/main`
   prints the latter as `remotes/origin/main` — and a structural read of that
   short name reports a remote called `remotes` while losing `origin` entirely.
-  Beyond the log/detail/file-diff routes it serves `GET /api/git/branches`
+  Beyond the repository listing (`GET /api/git/repos`, whose `rootPath` is null
+  in repositories-file mode) and the log/detail/file-diff routes it serves `GET /api/git/branches`
   (with default-branch resolution), `/api/git/compare` (branch-vs-base file
   list), `/api/git/compare/diff` (one file of a comparison), and
   `/api/git/working` + `/api/git/working/diff` (the working tree — uncommitted
@@ -179,8 +191,9 @@ consumers (standalone instance · shared package · nightshift-ui module):
     module, ADR-0032) is the cross-origin gate: the custom header, a JSON content
     type, `Sec-Fetch-Site` (when sent) of `same-origin`, and `Origin` (when sent)
     naming a host the server answers for — so a foreign page in the user's
-    browser cannot fire a checkout at the loopback service (no CORS plugin is
-    installed, so the preflight such a request needs is never granted). DNS
+    browser cannot fire a checkout at the loopback service (no CORS is granted
+    — except to an operator-listed embedding origin, below — so the preflight
+    such a request needs is never granted). DNS
     rebinding — where the browser itself calls the attacker's page same-origin —
     is closed one layer earlier by the Host guard below; the loopback default
     (ADR-0037 §4) is still what makes an unauthenticated write route tolerable,
@@ -188,6 +201,28 @@ consumers (standalone instance · shared package · nightshift-ui module):
     family with the same guards. The posture is recorded corpus-wide as ADR-0044
     (proposed): membership-resolved targets, the cross-origin gate, loopback
     only.
+  - **The embedding-host extension** of that posture — the one deliberate hole in
+    the cross-origin gate, off by default. `GIT_GRAPH_ALLOWED_ORIGINS` names the
+    *exact* serialised origins (`http://127.0.0.1:3115`) of pages that mount the
+    render layer and use this server as their backend — nightshift-ui first,
+    replacing its hand-ported `server/git/graph.ts` (#8). For those origins and
+    no others, `services/cors.ts` + `routes/cors.ts` (own modules, ADR-0032;
+    mounted right after the Host guard, scoped to `/api/`) reflect CORS headers
+    onto every response — errors included, so a host can show a 404 or git's 409
+    — and answer the checkout's preflight with 204; and the mutation guard admits
+    a `same-site`/`cross-site` request whose `Origin` is exactly listed. This
+    extends ADR-0044 §3 ("installs no CORS handling that could grant [a
+    preflight]"; "`Sec-Fetch-Site` … is `same-origin`") by one operator-named
+    exception and nothing more: the custom header, the JSON body, the Host guard
+    (a foreign Host is refused before the CORS step runs, whatever the
+    `Origin`), the membership resolution, and the loopback bind all still hold;
+    matching is exact string equality against the `Origin` a browser writes
+    itself (no wildcard, no host-only match — `localhost` and `127.0.0.1` are
+    different entries); no credentials are granted; an unlisted origin gets no
+    headers and no preflight, as before; a malformed entry fails the boot. With
+    the list empty the gate is exactly ADR-0044's. The host-side contract
+    (launch env, repo addressing, headers) is `docs/embedding-host.md`;
+    ADR-0044 itself (exocortex) should record the exception when next revised.
   - **The Host guard** (issue #5) answers only for the names the server is
     reachable under, on every route, whatever the bind address: `localhost`, the
     127.0.0.0/8 block, `[::1]` (port or not), and whatever
@@ -335,11 +370,23 @@ git runs with HEAD untouched (unknown and remote-only branch names, a tag asked
 for as a branch and vice versa, option- and revision-shaped names, a dangling
 commit no ref reaches, a non-hex hash, a path-shaped repository id); and git's
 refusal over uncommitted changes coming back with its stderr, the changes intact.
+The served set is pinned in `services/repository-set.test.ts` (the file parser:
+absolute-only, comments, normalisation, de-duplication; the listed set serving
+exactly its members, leaving out non-repositories, following the file as it is
+rewritten, and failing closed when it turns malformed) and at the service level in
+`git.test.ts` (reads by absolute identifier; a sibling on disk, the root-relative
+form, and a `..` traversal refused, and a checkout outside the set refused with HEAD
+untouched). `services/cors.test.ts` pins the origin parser (only what a browser
+would send in `Origin`) and the exact-match grant.
 `services/mutation-guard.test.ts` pins each cross-origin check on its own plus
 its composition on an Elysia route (refused before the handler, no CORS preflight
 granted — `Sec-Fetch-Site` is pinned on the pure verdict because the test DOM's
 Request drops `Sec-*` headers), including a foreign or opaque `Origin` refused
-with no `Sec-Fetch-Site` to go on. The Host guard is pinned twice:
+with no `Sec-Fetch-Site` to go on, and the embedding exception: a listed origin
+admitted `same-site`/`cross-site`, its neighbours (another port, the other
+loopback name, another scheme, a trailing slash) and an Origin-less cross-site
+request refused, the default (empty list) unchanged, and the header/body checks
+still required. The Host guard is pinned twice:
 `services/trusted-host.test.ts` for the pure parsing and allowlist (port
 stripping, bracketed IPv6 kept whole, malformed authorities refused, exact
 matching, allowlist entries however written, the 400/421 split) with
@@ -351,7 +398,18 @@ names served, a foreign Host refused with 421 on discovery, docs, spec, and git
 reads, a missing Host refused with 400, the audit's rebound checkout refused with
 HEAD untouched, a foreign `Origin` refused with HEAD untouched, the discovery
 document ignoring a foreign `X-Forwarded-Host`, and the page's own checkout still
-succeeding. `shared/gitActions.test.ts` pins the descriptor:
+succeeding. The same file launches a second server in the embedding-host
+configuration (a repositories file naming one repository beside the root and one
+outside any common root, plus two allowed origins): the listing is exactly the
+file's members by absolute path; a configured origin reads (CORS reflected for that
+origin only) and checks out `same-site`; its preflight is granted and no other
+origin's is; an unconfigured origin gets no CORS on a read and a 403 on a checkout
+with HEAD untouched; a foreign Host is refused with 421 even alongside a configured
+Origin; a repository outside the set is a readable 404 and its checkout leaves HEAD
+untouched; the file is followed as it is rewritten; `/api/status` reports the file
+and the origins. On the default server another loopback origin gets no CORS and no
+checkout, and two boot-failure cases pin that a malformed origin or a
+missing/relative repositories file stops the server. `shared/gitActions.test.ts` pins the descriptor:
 no entry ever missing, the reasons (already checked out, default branch, remote
 only, HEAD already detached here, no full hash), the row/pill section order,
 and the checkout statement's warnings. DOM tests cover `GitActionMenu`
@@ -402,7 +460,7 @@ covered too: `services/port.test.ts` (probe/walk against real binds),
 `bind-exposure.test.ts` (loopback-default / non-loopback-refusal, ADR-0037 §4),
 `cli/args.test.ts` (argv routing + flag parsing), and `scripts/dev-ports.test.ts`
 (env pinning + reassignment announcements).
-Currently 313 tests across 25 files.
+Currently 342 tests across 27 files.
 
 ## UX conventions
 
@@ -456,7 +514,9 @@ Currently 313 tests across 25 files.
   (`auto` default, announced walk), never as a silent fallback; a conflict on a
   pinned port is still fatal. Loopback bind by default; non-loopback refuses
   without `GIT_GRAPH_ALLOWED_HOSTS`. Whatever the bind, a request is answered
-  only for a loopback `Host` or one that variable names (issue #5).
+  only for a loopback `Host` or one that variable names (issue #5). Cross-origin
+  access exists only for the exact origins in `GIT_GRAPH_ALLOWED_ORIGINS` (none
+  by default); it never changes the bind or the Host allowlist.
 - ADR-0011 / ADR-0015: the `bgg` CLI resolves its sibling server bundle by real
   path, and its background daemon lives under the `daemon` subcommand.
 - Theme: light/dark/system toggle in every shell's header (default `system`),
