@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { IconGitMerge, IconSearch } from '@tabler/icons-react'
+import { IconCircleCheck, IconAlertCircle, IconGitMerge, IconSearch, IconX } from '@tabler/icons-react'
+import { describeCheckout, findHeadState } from '../shared/gitActions'
 import type {
   BranchList,
+  CheckoutTarget,
   CommitDetail,
   CommitLog,
   FileDiff,
@@ -10,6 +12,7 @@ import type {
   WorkingTree,
 } from '../shared/git.schema'
 import {
+  checkout,
   fetchBranches,
   fetchCommitDetail,
   fetchCommitLog,
@@ -21,13 +24,23 @@ import { commitDiffHref, compareHref, fileDiffHref, workingHref } from './lib/di
 import { loadHighlighter } from './lib/highlighter'
 import { useTheme } from './lib/theme'
 import { useDetailLayout } from './lib/detailLayout'
+import { announceRepositoryChange, useRepositoryChanges } from './lib/repositoryChanges'
 import {
   CommitGraph,
   CommitDetailPanel,
+  ConfirmActionDialog,
+  GitActionMenu,
   UncommittedChangesRow,
   graphContentLeft,
+  type CommitContextMenuRequest,
   type CommitGraphStats,
+  type GitActionNotice,
 } from './components'
+
+// How long a success notice stays before it clears itself. Failures of a git
+// write never reach here — they stay in the confirmation dialog with git's
+// stderr until the user acts on them.
+const NOTICE_MILLISECONDS = 6000
 import { ThemeToggle } from './components/ThemeToggle'
 import { DetailLayoutToggle } from './components/DetailLayoutToggle'
 
@@ -67,6 +80,17 @@ export function App() {
   const [fileDiff, setFileDiff] = useState<FileDiff | null>(null)
   const [isLoadingFileDiff, setIsLoadingFileDiff] = useState(false)
   const [fileDiffError, setFileDiffError] = useState<string | null>(null)
+  // Bumped whenever the selected repository changes on disk (a checkout here or
+  // in another tab), so every view of it refetches: log, branches, working tree,
+  // and the open commit's refs.
+  const [repositoryVersion, setRepositoryVersion] = useState(0)
+  // The git-action context menu, the checkout waiting on its confirmation, and
+  // the one-line outcome shown after an action.
+  const [contextMenu, setContextMenu] = useState<CommitContextMenuRequest | null>(null)
+  const [pendingCheckout, setPendingCheckout] = useState<CheckoutTarget | null>(null)
+  const [isCheckingOut, setIsCheckingOut] = useState(false)
+  const [checkoutError, setCheckoutError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<GitActionNotice | null>(null)
 
   // Loading a syntax grammar the first time a diff is expanded costs about half
   // a second; warming the highlighter here spends it while nobody is waiting.
@@ -107,8 +131,8 @@ export function App() {
         if (!cancelled) setIsLoadingLog(false)
       })
     // The branch listing drives the compare affordances; a failure there is not
-    // fatal to the graph, so it only clears the list rather than raising an error.
-    setBranchList(null)
+    // fatal to the graph, so it only leaves the list unset rather than raising an
+    // error.
     fetchBranches(selectedRepository)
       .then((list) => {
         if (!cancelled) setBranchList(list)
@@ -116,7 +140,6 @@ export function App() {
       .catch(() => {})
     // The working tree drives the "Uncommitted changes" node; like the branch
     // listing a failure there is not fatal to the graph, so it is swallowed.
-    setWorkingTree(null)
     fetchWorkingTree(selectedRepository)
       .then((tree) => {
         if (!cancelled) setWorkingTree(tree)
@@ -129,11 +152,32 @@ export function App() {
     return () => {
       cancelled = true
     }
-  }, [selectedRepository])
+  }, [selectedRepository, repositoryVersion])
 
   // Switching repositories invalidates any open commit — its hash belongs to
-  // the previous history.
-  useEffect(() => setSelectedCommitHash(null), [selectedRepository])
+  // the previous history — and the branch listing and working tree, which are
+  // cleared here rather than on every refetch so a refresh after a checkout does
+  // not blank the working-tree row while it reloads. An open menu or a pending
+  // checkout named the previous repository too.
+  useEffect(() => {
+    setSelectedCommitHash(null)
+    setBranchList(null)
+    setWorkingTree(null)
+    setContextMenu(null)
+    setPendingCheckout(null)
+  }, [selectedRepository])
+
+  // A checkout in another tab changes what this one shows.
+  useRepositoryChanges(
+    selectedRepository,
+    useCallback(() => setRepositoryVersion((version) => version + 1), []),
+  )
+
+  useEffect(() => {
+    if (notice === null || notice.tone === 'error') return
+    const timer = setTimeout(() => setNotice(null), NOTICE_MILLISECONDS)
+    return () => clearTimeout(timer)
+  }, [notice])
 
   // Fetch the details of whatever commit is selected.
   useEffect(() => {
@@ -159,7 +203,7 @@ export function App() {
     return () => {
       cancelled = true
     }
-  }, [selectedRepository, selectedCommitHash])
+  }, [selectedRepository, selectedCommitHash, repositoryVersion])
 
   // Selecting another commit invalidates the open file — its path belongs to
   // the previous commit's listing.
@@ -239,6 +283,51 @@ export function App() {
   const repositories = repositoryList?.repositories ?? []
   const commits = commitLog?.commits ?? []
   const hasCommits = commits.length > 0
+  const remotes = commitLog?.remotes ?? []
+  const headState = useMemo(() => findHeadState(commits, remotes), [commits, remotes])
+  const repositoryName =
+    repositories.find((repository) => repository.relativePath === selectedRepository)?.name ??
+    commitLog?.repository ??
+    ''
+
+  const closeContextMenu = useCallback(() => setContextMenu(null), [])
+  const buildMenuCommitHref = useCallback(
+    (commit: GitCommit) => (selectedRepository === null ? null : commitDiffHref(selectedRepository, commit.hash)),
+    [selectedRepository],
+  )
+
+  // A checkout never runs from the menu directly: the menu names the target, the
+  // dialog states what will happen to which repository, and only its confirm
+  // runs git.
+  const requestCheckout = useCallback((target: CheckoutTarget) => {
+    setCheckoutError(null)
+    setPendingCheckout(target)
+  }, [])
+
+  const cancelCheckout = useCallback(() => {
+    setPendingCheckout(null)
+    setCheckoutError(null)
+  }, [])
+
+  async function confirmCheckout() {
+    if (selectedRepository === null || pendingCheckout === null) return
+    setIsCheckingOut(true)
+    setCheckoutError(null)
+    try {
+      const result = await checkout(selectedRepository, pendingCheckout)
+      setPendingCheckout(null)
+      setNotice({ tone: 'success', text: result.message || `HEAD is now at ${result.head}` })
+      // Everything that shows this repository is stale now: this tab refetches,
+      // and the others (an open /working tab) hear about it.
+      setRepositoryVersion((version) => version + 1)
+      announceRepositoryChange(selectedRepository)
+    } catch (error) {
+      // Kept in the dialog, verbatim — for a refusal this is git's own stderr.
+      setCheckoutError(error instanceof Error ? error.message : 'the checkout failed')
+    } finally {
+      setIsCheckingOut(false)
+    }
+  }
 
   const loadedHashes = useMemo(() => new Set(commits.map((commit) => commit.hash)), [commits])
   const isCommitLoaded = useCallback((commitHash: string) => loadedHashes.has(commitHash), [loadedHashes])
@@ -246,8 +335,10 @@ export function App() {
   // Esc closes the panel; ↑/↓ walk the graph while it is open, so a commit can
   // be read through without going back to the mouse. Typing in the search box
   // keeps its own arrow-key behaviour.
+  const isOverlayOpen = contextMenu !== null || pendingCheckout !== null
   useEffect(() => {
-    if (selectedCommitHash === null) return
+    // An open menu or dialog owns the keyboard; ↑/↓ and Esc are theirs then.
+    if (selectedCommitHash === null || isOverlayOpen) return
     function handleKeyDown(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null
       if (target?.tagName === 'INPUT' || target?.tagName === 'SELECT' || target?.isContentEditable) {
@@ -268,7 +359,7 @@ export function App() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [commits, selectedCommitHash])
+  }, [commits, selectedCommitHash, isOverlayOpen])
 
   const readout = [
     hasCommits &&
@@ -411,7 +502,7 @@ export function App() {
           {loadError === null && hasCommits && (
             <CommitGraph
               commits={commits}
-              remotes={commitLog?.remotes ?? []}
+              remotes={remotes}
               searchQuery={searchQuery.trim()}
               onStats={handleGraphStats}
               selectedHash={selectedCommitHash}
@@ -420,12 +511,39 @@ export function App() {
               // selected row. In sidebar mode the graph stays unbroken and the
               // panel docks to the right instead.
               selectedDetail={detailLayout === 'inline' ? detailPanel : null}
+              onContextMenu={setContextMenu}
             />
           )}
           </div>
 
           {detailLayout === 'sidebar' && detailPanel}
         </main>
+
+        {/* The outcome of the last git action, beside the graph it changed. */}
+        {notice !== null && (
+          <div
+            role="status"
+            className={`flex items-center gap-2 border-t border-line bg-raised px-4 py-1.5 text-[12px] ${
+              notice.tone === 'error' ? 'text-[#ff7b72]' : 'text-fg'
+            }`}
+          >
+            {notice.tone === 'error' ? (
+              <IconAlertCircle size={15} className="shrink-0" aria-hidden />
+            ) : (
+              <IconCircleCheck size={15} className="shrink-0 text-[#7ee787]" aria-hidden />
+            )}
+            <span className="min-w-0 flex-1 truncate font-mono">{notice.text}</span>
+            <button
+              type="button"
+              className="inline-flex cursor-pointer rounded p-0.5 text-faint hover:bg-rowhover hover:text-fg"
+              onClick={() => setNotice(null)}
+              title="dismiss"
+              aria-label="dismiss"
+            >
+              <IconX size={14} aria-hidden />
+            </button>
+          </div>
+        )}
 
         <footer className="flex flex-wrap gap-4 border-t border-line bg-raised px-4 py-1.5 text-[11.5px] text-faint">
           <span className="inline-flex items-center gap-1.5">
@@ -439,6 +557,36 @@ export function App() {
           {graphStats.matchCount === 0 && hasCommits && <span>no rows match your search</span>}
         </footer>
       </div>
+
+      {contextMenu !== null && (
+        <GitActionMenu
+          input={{
+            commit: contextMenu.commit,
+            refGroups: contextMenu.refGroups,
+            focusedGroup: contextMenu.focusedGroup,
+            head: headState,
+            defaultBranch,
+          }}
+          anchor={contextMenu.anchor}
+          onClose={closeContextMenu}
+          onCheckout={requestCheckout}
+          buildCommitHref={buildMenuCommitHref}
+          buildCompareHref={buildCompareHref}
+          onNotice={setNotice}
+        />
+      )}
+      {pendingCheckout !== null && (
+        <ConfirmActionDialog
+          description={describeCheckout(pendingCheckout, {
+            repositoryName,
+            hasUncommittedChanges: (workingTree?.files.length ?? 0) > 0,
+          })}
+          isRunning={isCheckingOut}
+          error={checkoutError}
+          onConfirm={confirmCheckout}
+          onCancel={cancelCheckout}
+        />
+      )}
     </div>
   )
 }

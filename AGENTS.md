@@ -1,7 +1,8 @@
 # git-graph — AGENTS.md
 
 A **local git commit-graph viewer**: a standalone web service that lists the
-git repositories at a served root and renders their commit DAGs. Sibling of
+git repositories at a served root and renders their commit DAGs, and — its one
+write — checks out a branch, tag, or commit from a context menu on the graph. Sibling of
 `binp-file-explorer` in shape and conventions (local-machine service-first;
 later embeddable in nightshift-ui as a module).
 
@@ -55,7 +56,9 @@ consumers (standalone instance · shared package · nightshift-ui module):
     mhutchie/GitLens/GitKraken). Do not "improve" its behaviour without
     updating the regression fixture in `graphLayout.test.ts`, which pins the
     prototype-captured output.
-  - `gitLog.ts` — `git log` wire format + parser (unit separator `%x1f`). `%d`
+  - `gitLog.ts` — `git log` wire format + parser (unit separator `%x1f`;
+    `%H` rides along as `fullHash`, which "copy commit hash" and a commit
+    checkout use, since an abbreviation can grow ambiguous). `%d`
     decorations split on `", "`, never on the bare comma: a comma is legal in a
     ref name, a space is not, so that is the only exact split — splitting on `,`
     tears the tag `v1,origin/release` into a fragment shaped like a
@@ -119,6 +122,24 @@ consumers (standalone instance · shared package · nightshift-ui module):
     load-bearing).
   - `fuzzy.ts` — subsequence fuzzy matcher with matched-character segments
     (ADR-0019).
+  - `gitActions.ts` — the git-action context menu as data (issue #2): the one
+    descriptor (ADR-0026) of which entries a commit row or a ref pill offers
+    (`buildGitMenuSections`), why an entry cannot apply right now
+    (`unavailableReason` — never a dropped entry, ADR-0025), where HEAD is
+    (`findHeadState`, read off the log's own decorations), and what a checkout
+    says before it runs (`describeCheckout`: the `git switch` command, the
+    repository, the detached-HEAD warning, git's rule about uncommitted changes).
+    A row menu lists the commit first and then every ref on it — which is what
+    makes branch and tag checkout reachable from the keyboard, since pills are
+    not focusable; a pill menu leads with its own ref.
+  - `checkout.ts` — `git switch` argument shapes for a resolved checkout.
+    `switch`, never `checkout` (which also restores paths); a branch after `--`
+    with `--no-guess` (no silent tracking-branch creation), a detach target
+    always a full `refs/tags/…` refname or a full hash, `advice.detachedHead=false`
+    so git's report is one line.
+  - `mutationRequest.ts` — the header (`X-Git-Graph-Action: 1`) every mutating
+    request carries, shared by the client that sends it and the guard that checks
+    it.
 - `server/` — Elysia service. `services/git.ts` scans the served root and
   shells out to git. Everything untrusted is re-validated by **membership**
   against git's own listings before it reaches the shell — repository
@@ -145,6 +166,50 @@ consumers (standalone instance · shared package · nightshift-ui module):
   `/api/git/working` + `/api/git/working/diff` (the working tree — uncommitted
   changes vs HEAD, and one file of it; tracked via `git diff HEAD`, untracked via
   `git ls-files --others` diffed from `/dev/null`, membership-guarded path).
+  - **The write surface** is exactly one route, `POST /api/git/checkout`
+    (issue #2's first slice). It holds the read routes' membership line in
+    `resolveCheckout`: a branch must be one `for-each-ref refs/heads` lists, a
+    tag one `refs/tags` lists (handed on as the full refname, so a same-named
+    branch cannot win), a commit hash must `rev-parse` to a commit whose full hash
+    starts with it *and* be reachable from a ref or HEAD (`for-each-ref
+    --contains` / `merge-base --is-ancestor` — the `git log --all` history); only
+    git's own strings reach `git switch`. git's safety stays in charge: a refused
+    switch (uncommitted changes it would overwrite) is a 409 whose message is
+    git's stderr verbatim. In front of it, `services/mutation-guard.ts` (its own
+    module, ADR-0032) is the cross-origin gate: the custom header, a JSON content
+    type, `Sec-Fetch-Site` (when sent) of `same-origin`, and `Origin` (when sent)
+    naming a host the server answers for — so a foreign page in the user's
+    browser cannot fire a checkout at the loopback service (no CORS plugin is
+    installed, so the preflight such a request needs is never granted). DNS
+    rebinding — where the browser itself calls the attacker's page same-origin —
+    is closed one layer earlier by the Host guard below; the loopback default
+    (ADR-0037 §4) is still what makes an unauthenticated write route tolerable,
+    and must not be relaxed for it. Later write actions (#2) join this route
+    family with the same guards. The posture is recorded corpus-wide as ADR-0044
+    (proposed): membership-resolved targets, the cross-origin gate, loopback
+    only.
+  - **The Host guard** (issue #5) answers only for the names the server is
+    reachable under, on every route, whatever the bind address: `localhost`, the
+    127.0.0.0/8 block, `[::1]` (port or not), and whatever
+    `GIT_GRAPH_ALLOWED_HOSTS` names — so that variable carries two jobs, the
+    ADR-0037 §4 exposure acknowledgement and the per-request allowlist, and a
+    loopback-bound service behind a proxy that passes its public `Host` through
+    must list that name too. This is the DNS-rebinding defence: a rebound page is
+    same-origin as far as the browser can tell, and only the attacker's name in
+    `Host` tells it apart. The decision is pure in `services/trusted-host.ts`
+    (strict authority parsing — a malformed Host is refused, never trimmed into a
+    loopback one; matching is exact, so `evil.localhost` is foreign); the refusal
+    is `routes/trusted-host.ts`, an `onRequest` plugin mounted first in
+    `index.ts` — a foreign name gets 421, a missing or malformed Host 400 (every
+    browser sends one; an absent Host cannot be told apart from a rebound one).
+    `index.ts` builds the app with `nativeStaticResponse: false`, and that is
+    load-bearing: Elysia otherwise hands a fixed-`Response` route (the Scalar page
+    at `/api/docs`) to Bun as a native static route that runs no hook, which
+    would answer a rebound Host. `services/public-origin.ts` builds the discovery
+    document's origin from the validated Host, honouring `x-forwarded-host` only
+    for a name the guard would itself serve and `x-forwarded-proto` only as
+    `http`/`https`. The mutation guard's `Origin` check reuses the same allowlist
+    (`isTrustedOrigin`).
   - Standalone surface (the on-demand instance consumer, mirroring
     binp-file-explorer's `bfe`): `server/cli.ts` + `server/cli/` is the `bgg`
     executable the flake installs — `serve` (foreground, browser-open) and a
@@ -167,7 +232,13 @@ consumers (standalone instance · shared package · nightshift-ui module):
   diff tabs `FileDiffPage` (`/diff`, one file), `CommitDiffPage` (`/commit`, a
   whole commit), `ComparePage` (`/compare`, a branch against a base), and
   `WorkingTreePage` (`/working`, uncommitted changes vs HEAD). Every
-  rendering piece is fetch-free — `CommitGraph.tsx` (commits in, SVG + rows
+  rendering piece is fetch-free — `GitActionMenu.tsx` (the context menu a row or
+  pill opens through `CommitGraph`'s `onContextMenu` seam: icons, the menu
+  keyboard contract, and the rule that an action whose handler the host did not
+  wire renders disabled with a reason, never absent; copying is its own, via the
+  Clipboard API), `ConfirmActionDialog.tsx` (the statement a git write makes
+  before it runs, and where git's refusal comes back, verbatim, to retry or
+  cancel), `CommitGraph.tsx` (commits in, SVG + rows
   out), `CommitDetailPanel.tsx` (metadata, the verbatim commit message, changed
   files, copy-hash, parent navigation — in that order),
   `FileDiff.tsx` (one diff, unified or split by prop), `MultiFileDiffView.tsx`
@@ -186,7 +257,11 @@ consumers (standalone instance · shared package · nightshift-ui module):
   tokens in `components/fileStatus.tsx` and chrome in `DiffTabFrame.tsx`. The
   shells (`App.tsx` and the four pages) own all fetching; `lib/diffRoutes.ts` is
   the single descriptor for the diff-tab URLs (ADR-0026) that the panel builds
-  and the pages parse.
+  and the pages parse. After a checkout `App.tsx` bumps a `repositoryVersion`
+  that every fetch of the repository depends on (log, branches, working tree,
+  open commit), and `lib/repositoryChanges.ts` (app-only, a BroadcastChannel)
+  tells the other tabs — an open `/working` tab refetches rather than showing a
+  working tree that no longer exists.
   - The working-tree row is **barrel-level, not app-level** (ADR-0026 /
     ADR-0027): it is read on two surfaces — this shell and nightshift-ui's
     `<GitGraphPanel>` — so it lives in `components/` with the same
@@ -211,8 +286,9 @@ consumers (standalone instance · shared package · nightshift-ui module):
     inline variant leaves to the commit row above it.
 
 The render layer is importable by subpath — `package.json` `exports` maps
-`./components` (the fetch-free components, ref pill included), `./shared`
-(schema + layout + ref grouping + fuzzy),
+`./components` (the fetch-free components, ref pill and git-action menu
+included), `./shared` (schema + layout + ref grouping + fuzzy + the menu
+descriptor),
 `./highlighter` (`lib/highlighter.ts`), and `./theme.css`, so nightshift-ui can
 source-alias them (no proxy, no forked copy).
 
@@ -251,7 +327,41 @@ git's shortening prints `remotes/origin/main` and `heads/origin/main` — the
 remote name must come back as `origin`, never as a forged remote called
 `remotes`; the branch listing must say `origin/main`; and the default branch
 must follow `origin/HEAD` to the colliding `trunk` rather than fall back to
-`main`). The `git show`/`git diff` parsers
+`main`). The checkout route's service half runs against a fresh fixture per test
+(a checkout changes the state the next would start from): branch, annotated tag
+(and a tag sharing a branch's name, which must land on the tag), commit by full
+and by abbreviated hash; every target the listings do not name refused *before*
+git runs with HEAD untouched (unknown and remote-only branch names, a tag asked
+for as a branch and vice versa, option- and revision-shaped names, a dangling
+commit no ref reaches, a non-hex hash, a path-shaped repository id); and git's
+refusal over uncommitted changes coming back with its stderr, the changes intact.
+`services/mutation-guard.test.ts` pins each cross-origin check on its own plus
+its composition on an Elysia route (refused before the handler, no CORS preflight
+granted — `Sec-Fetch-Site` is pinned on the pure verdict because the test DOM's
+Request drops `Sec-*` headers), including a foreign or opaque `Origin` refused
+with no `Sec-Fetch-Site` to go on. The Host guard is pinned twice:
+`services/trusted-host.test.ts` for the pure parsing and allowlist (port
+stripping, bracketed IPv6 kept whole, malformed authorities refused, exact
+matching, allowlist entries however written, the 400/421 split) with
+`services/public-origin.test.ts` beside it, and `server/index.test.ts` end to end
+— the real `server/index.ts` launched as its own process against a scratch
+repository and driven over a raw TCP socket (the test DOM's `fetch` drops
+`Host`/`Origin`, and a raw socket can send no Host at all): loopback and allowed
+names served, a foreign Host refused with 421 on discovery, docs, spec, and git
+reads, a missing Host refused with 400, the audit's rebound checkout refused with
+HEAD untouched, a foreign `Origin` refused with HEAD untouched, the discovery
+document ignoring a foreign `X-Forwarded-Host`, and the page's own checkout still
+succeeding. `shared/gitActions.test.ts` pins the descriptor:
+no entry ever missing, the reasons (already checked out, default branch, remote
+only, HEAD already detached here, no full hash), the row/pill section order,
+and the checkout statement's warnings. DOM tests cover `GitActionMenu`
+(unwired handlers render disabled with a reason, a checkout is only *requested*,
+links, the arrow/Home/End/Enter/Escape contract and that handled keys never reach
+the host's shortcuts, copy via a stubbed Clipboard API), `ConfirmActionDialog`
+(the statement before anything runs, stderr verbatim, buttons inert but focusable
+while git runs), and `CommitGraph`'s context-menu seam (row vs pill request,
+browser menu suppressed only over rows and pills and only when a handler is
+wired, Shift+F10 / the context-menu key). The `git show`/`git diff` parsers
 (`commitDetail.ts`, `fileDiff.ts`) and the route membership guards — path *and*
 ref — are covered too, and client components have DOM tests (`bunfig.toml`
 preloads happy-dom via `src/test/setup.ts`), including `MultiFileDiffView`'s
@@ -292,7 +402,7 @@ covered too: `services/port.test.ts` (probe/walk against real binds),
 `bind-exposure.test.ts` (loopback-default / non-loopback-refusal, ADR-0037 §4),
 `cli/args.test.ts` (argv routing + flag parsing), and `scripts/dev-ports.test.ts`
 (env pinning + reassignment announcements).
-Currently 240 tests across 18 files.
+Currently 313 tests across 25 files.
 
 ## UX conventions
 
@@ -329,12 +439,24 @@ Currently 240 tests across 18 files.
   "selected" and "checked out" the same shape. A detached HEAD is on no branch,
   so it leaves the row unmarked and speaks through its own `HEAD` pill.
 - ADR-0025: disabled controls stay visible and explain themselves (`title`/placeholder).
+- Git-action context menu (issue #2): right-click a commit row or ref pill, or
+  Shift+F10 / the context-menu key on a focused row; the browser's menu is
+  suppressed over exactly those targets. Arrows/Home/End move, Enter/Space
+  invoke, Escape closes and returns focus to the row. Disabled entries stay
+  focusable (`aria-disabled`) so their reason is reachable. A mutating entry only
+  *requests* the action: the host shows `ConfirmActionDialog` with
+  `describeCheckout`'s statement, runs git on confirm, and keeps git's stderr in
+  the dialog on failure; success shows git's one-line report in a status strip
+  and refetches. A detaching checkout (tag or commit) always carries the
+  detached-HEAD warning. Remote-only refs offer checkout disabled-with-reason
+  (tracking-branch creation is not in this slice).
 - ADR-0016: no third-party runtime assets — everything is bundled.
 - ADR-0022: Tabler vectors, never emoji.
 - ADR-0018 / ADR-0037: dynamic port allocation runs in front of the strict bind
   (`auto` default, announced walk), never as a silent fallback; a conflict on a
   pinned port is still fatal. Loopback bind by default; non-loopback refuses
-  without `GIT_GRAPH_ALLOWED_HOSTS`.
+  without `GIT_GRAPH_ALLOWED_HOSTS`. Whatever the bind, a request is answered
+  only for a loopback `Host` or one that variable names (issue #5).
 - ADR-0011 / ADR-0015: the `bgg` CLI resolves its sibling server bundle by real
   path, and its background daemon lives under the `daemon` subcommand.
 - Theme: light/dark/system toggle in every shell's header (default `system`),

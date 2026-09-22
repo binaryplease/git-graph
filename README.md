@@ -17,7 +17,8 @@ your repositories the way the proven desktop tools do (mhutchie/vscode-git-graph
 GitLens, GitKraken), as a standalone local-machine service.
 
 Point it at a folder of projects, pick a repository, and read its history in a
-browser: lanes, merges, ref pills, diffs, and uncommitted changes.
+browser: lanes, merges, ref pills, diffs, and uncommitted changes — and check out
+a branch, tag, or commit straight from the graph.
 
 ## Quick start
 
@@ -84,10 +85,23 @@ Running the server directly works too: `bun server/index.ts ~/projects`, or set
   untracked, opening the same diff view.
 - **Standalone diff tabs** for a single file, a whole commit, a branch (compared
   three-dot against the default branch), or the working tree.
+- A **context menu** on every commit row and ref pill — right-click, or
+  `Shift+F10` / the context-menu key on a focused row: check out a branch, a tag,
+  or a commit (detached `HEAD`, with a warning saying so), copy the full or short
+  hash, open the commit in a diff tab, or compare a branch against the default
+  branch. Entries that cannot apply stay in the menu, disabled, and say why.
 - A **repository picker**, deep-linkable via `?repo=`.
 - Light / dark / system theme, persisted.
 
-It is **read-only**. Nothing it does can change a repository.
+## What it changes
+
+**Checkout is the one write.** Everything else is read-only. A checkout always
+states what it will run, in which repository, before it runs — a detaching one
+warns that it detaches `HEAD` — and only runs on your confirm. It is `git
+switch` underneath, so git's own safety stays in charge: a switch that would
+overwrite uncommitted changes is refused, and git's message is shown to you
+verbatim. After a checkout the graph, the working-tree row, and any open
+`/working` tab refresh.
 
 ## Security model — loopback by default
 
@@ -101,11 +115,31 @@ name the served host(s) in `GIT_GRAPH_ALLOWED_HOSTS`. Setting that variable is
 an acknowledgement that an authenticating reverse proxy fronts the service and
 the port is not directly reachable. There is no silent way to publish it.
 
+Whatever the bind address, the server also answers only for the host names it is
+reachable under: `localhost`, `127.0.0.1` (the whole `127.0.0.0/8` block),
+`[::1]`, and the names in `GIT_GRAPH_ALLOWED_HOSTS`. A request whose `Host`
+header names anything else gets `421`, and one with no `Host` header at all
+gets `400`. This is what stops DNS rebinding, where a page you visit points its
+own domain at `127.0.0.1` so that your browser treats the service as that page's
+own server. A reverse proxy that passes its public host name through in `Host`
+(Caddy does by default) therefore needs that name in `GIT_GRAPH_ALLOWED_HOSTS`
+even when git-graph itself binds loopback.
+
 Only repositories the server itself discovered are ever passed to git. Every
 untrusted input is re-validated by membership against git's own listings —
 repository ids against the repo listing, file paths against a commit's own file
 list, refs against `git for-each-ref` — and nothing is interpolated into a
-shell.
+shell. A checkout holds the same line: the branch or tag must come out of
+`git for-each-ref`, the commit out of the history the graph shows.
+
+The checkout route also refuses requests that did not come from the git-graph
+page itself. Loopback keeps other machines out, but not other web pages open in
+your browser, which can send requests to `127.0.0.1` too. So a checkout must
+carry a custom header and a JSON body, which a foreign page cannot send without a
+CORS preflight the server never answers. A browser request marked
+`Sec-Fetch-Site: cross-site`, or whose `Origin` names a host the server does not
+answer for, is refused outright. A DNS-rebound page never gets this far: the
+Host check above refuses it first.
 
 See [`SECURITY.md`](SECURITY.md) for the full threat model and how to report a
 vulnerability.
@@ -115,7 +149,8 @@ vulnerability.
 The flake exposes a hardened **NixOS module** (`nixosModules.default`,
 `services.git-graph`) that runs the server as a loopback-bound systemd
 service. Front it with an authenticating reverse proxy and set `allowedHosts`
-before exposing it — see the security model above.
+to the name it serves before exposing it — the service answers for no other
+name, loopback aside. See the security model above.
 
 ## Embedding the graph
 
@@ -124,8 +159,8 @@ graph without forking it:
 
 | Subpath | Contents |
 |---|---|
-| `git-graph/components` | The fetch-free React components — graph, detail panel, diffs, working-tree row |
-| `git-graph/shared` | The git schema, the layout algorithm, the fuzzy matcher |
+| `git-graph/components` | The fetch-free React components — graph, detail panel, diffs, working-tree row, the git-action context menu and its confirmation dialog |
+| `git-graph/shared` | The git schema, the layout algorithm, the fuzzy matcher, the context-menu descriptor |
 | `git-graph/theme.css` | The palette and lane colour tokens |
 
 Every component takes its data as props and does no fetching of its own; the
@@ -138,7 +173,7 @@ source alias (Vite `resolve.alias`) or a git dependency.
 bun install
 bun run dev        # resolves free ports, then starts server + client
 bun run dev:ports  # report the resolved ports without starting anything
-bun test           # 170 tests
+bun test           # 287 tests
 bun run typecheck
 bun run build      # dist/client + dist/server (server and the bgg CLI)
 ```
@@ -169,8 +204,10 @@ with [Shiki](https://shiki.style) tokenization; icons are
 
 ## Status
 
-Pre-1.0 and read-only. Planned: git actions from the UI (checkout, merge,
-branch), and a right-click context menu on commit rows and ref pills.
+Pre-1.0. The context menu ships with checkout as its first git action. The
+rest of [#2](https://github.com/binaryplease/git-graph/issues/2) will follow as
+their own slices, one action at a time: create a branch or tag, revert,
+cherry-pick, reset, merge, rebase, delete, push/pull/fetch, and rename.
 
 ## License
 

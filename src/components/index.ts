@@ -7,7 +7,7 @@
 // copy, no drift). Every one of these owns no data fetching and no app chrome:
 // the host supplies the data as props and a `loadFileDiff` callback.
 export { CommitGraph } from './CommitGraph'
-export type { CommitGraphProps, CommitGraphStats } from './CommitGraph'
+export type { CommitContextMenuRequest, CommitGraphProps, CommitGraphStats } from './CommitGraph'
 
 export { FileDiff } from './FileDiff'
 export type { FileDiffProps } from './FileDiff'
@@ -41,6 +41,19 @@ export type { RefPillProps } from './RefPill'
 // composes it directly above the graph and aligns it with `graphContentLeft`.
 export { UncommittedChangesRow } from './UncommittedChangesRow'
 export type { UncommittedChangesRowProps } from './UncommittedChangesRow'
+
+// The git-action context menu (issue #2) a row or pill opens through
+// CommitGraph's `onContextMenu`, and the confirmation every mutating entry goes
+// through before it runs. Both fetch-free: the host passes the handlers (a
+// missing one leaves its entries disabled with a reason, never absent) and runs
+// the action itself on confirm. Their wording — which entries, why one cannot
+// apply, what a checkout says — is `buildGitMenuSections` / `describeCheckout`
+// in `git-graph/shared`, so every surface reads the same.
+export { GitActionMenu } from './GitActionMenu'
+export type { GitActionMenuAnchor, GitActionMenuProps, GitActionNotice } from './GitActionMenu'
+
+export { ConfirmActionDialog } from './ConfirmActionDialog'
+export type { ConfirmActionDialogProps } from './ConfirmActionDialog'
 
 // The graph geometry a host needs to align that row — and any other non-commit
 // row — with the commit subjects and the node column, rather than guessing a

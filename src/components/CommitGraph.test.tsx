@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, createEvent, fireEvent, render, screen } from '@testing-library/react'
 import type { GitCommit } from '../../shared/git.schema'
-import { CommitGraph } from './CommitGraph'
+import { CommitGraph, type CommitContextMenuRequest } from './CommitGraph'
 
 // The inline commit-detail slot: when a row is selected and a detail node is
 // provided, the graph expands it in-flow beneath that row; otherwise the graph
@@ -11,6 +11,7 @@ afterEach(cleanup)
 
 const commit = (overrides: Partial<GitCommit>): GitCommit => ({
   hash: 'aaa1111',
+  fullHash: '',
   parents: [],
   refs: [],
   author: 'Test',
@@ -238,5 +239,72 @@ describe('CommitGraph checked-out row marker', () => {
     expect(pills.map((pill) => pill.text)).toEqual(['HEAD', 'main'])
     expect(pills[0]!.className).toContain('ref-head')
     expect(pills[0]!.className).not.toContain('ref-checked-out')
+  })
+})
+
+// The context-menu seam (issue #2): a right-click on a row or a pill, or the
+// keyboard's context-menu keys on a focused row, hand the host a request — and
+// the browser's own menu is suppressed over exactly those targets. Without a
+// handler the graph leaves the browser's menu alone.
+describe('CommitGraph context menu', () => {
+  const decorated = [
+    commit({ hash: 'aaa1111', subject: 'child', parents: ['bbb2222'], refs: ['HEAD -> main', 'tag: v1.0'] }),
+    commit({ hash: 'bbb2222', subject: 'parent' }),
+  ]
+  const rowOf = (subject: string) => screen.getByText(subject).closest('button')!
+  const pillOf = (text: string) =>
+    [...document.querySelectorAll<HTMLElement>('.ref-pill')].find((pill) => pill.textContent === text)!
+
+  const renderWithMenu = () => {
+    const requests: CommitContextMenuRequest[] = []
+    render(<CommitGraph commits={decorated} remotes={[]} onContextMenu={(request) => requests.push(request)} />)
+    return requests
+  }
+
+  test('a right-click on a row asks for the row menu at the pointer and suppresses the browser menu', () => {
+    const requests = renderWithMenu()
+    const event = createEvent.contextMenu(rowOf('parent'), { clientX: 40, clientY: 70 })
+    fireEvent(rowOf('parent'), event)
+    expect(event.defaultPrevented).toBe(true)
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).toMatchObject({ focusedGroup: null, anchor: { x: 40, y: 70 } })
+    expect(requests[0]!.commit.hash).toBe('bbb2222')
+  })
+
+  test('a right-click on a pill asks for that ref’s menu, once — not the row’s as well', () => {
+    const requests = renderWithMenu()
+    const event = createEvent.contextMenu(pillOf('v1.0'), { clientX: 12, clientY: 20 })
+    fireEvent(pillOf('v1.0'), event)
+    expect(event.defaultPrevented).toBe(true)
+    expect(requests).toHaveLength(1)
+    expect(requests[0]!.focusedGroup).toMatchObject({ kind: 'tag', name: 'v1.0' })
+    expect(requests[0]!.refGroups.map((group) => group.name)).toEqual(['main', 'v1.0'])
+  })
+
+  test('Shift+F10 and the context-menu key open the row menu from the keyboard', () => {
+    const requests = renderWithMenu()
+    const row = rowOf('child')
+    expect(row.getAttribute('aria-keyshortcuts')).toBe('Shift+F10')
+    const shiftF10 = createEvent.keyDown(row, { key: 'F10', shiftKey: true })
+    fireEvent(row, shiftF10)
+    expect(shiftF10.defaultPrevented).toBe(true)
+    fireEvent.keyDown(row, { key: 'ContextMenu' })
+    // A plain F10 is not a context-menu request.
+    fireEvent.keyDown(row, { key: 'F10' })
+    expect(requests.map((request) => [request.commit.hash, request.focusedGroup])).toEqual([
+      ['aaa1111', null],
+      ['aaa1111', null],
+    ])
+  })
+
+  test('without a handler the browser keeps its own menu', () => {
+    render(<CommitGraph commits={decorated} remotes={[]} />)
+    const rowEvent = createEvent.contextMenu(rowOf('parent'))
+    fireEvent(rowOf('parent'), rowEvent)
+    const pillEvent = createEvent.contextMenu(pillOf('v1.0'))
+    fireEvent(pillOf('v1.0'), pillEvent)
+    expect(rowEvent.defaultPrevented).toBe(false)
+    expect(pillEvent.defaultPrevented).toBe(false)
+    expect(rowOf('parent').hasAttribute('aria-keyshortcuts')).toBe(false)
   })
 })

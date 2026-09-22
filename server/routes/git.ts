@@ -1,7 +1,9 @@
 import { Elysia } from 'elysia'
-import { config } from '../config'
+import { additionalAllowedHosts, config } from '../config'
+import { checkMutationRequest } from '../services/mutation-guard'
 import {
   createGitService,
+  type CheckoutFailureReason,
   type ReadCommitDetailFailureReason,
   type ReadCommitLogFailureReason,
   type ReadCompareFailureReason,
@@ -13,6 +15,8 @@ import {
 import {
   BranchListQuerySchema,
   BranchListSchema,
+  CheckoutRequestSchema,
+  CheckoutResultSchema,
   CommitDetailQuerySchema,
   CommitDetailSchema,
   CommitLogQuerySchema,
@@ -135,6 +139,32 @@ function workingFileDiffFailureStatusAndMessage(
     return { statusCode: 404, message: `the working tree does not touch this file: ${filePath}` }
   }
   return workingFailureStatusAndMessage(reason, repositoryIdentifier, detail)
+}
+
+function checkoutFailureStatusAndMessage(
+  reason: CheckoutFailureReason,
+  repositoryIdentifier: string,
+  detail?: string,
+): { statusCode: 400 | 404 | 409 | 500; message: string } {
+  switch (reason) {
+    case 'unknown-repository':
+      return {
+        statusCode: 404,
+        message: `no such repository at the served root: ${repositoryIdentifier || '(root)'}`,
+      }
+    case 'unknown-ref':
+      return { statusCode: 404, message: detail || 'no such ref in this repository' }
+    case 'unknown-commit':
+      return { statusCode: 404, message: 'no such commit in the history of this repository' }
+    case 'invalid-hash':
+      return { statusCode: 400, message: 'not a commit hash' }
+    // git said no — most often uncommitted changes the switch would overwrite.
+    // Its stderr is the message, verbatim: the user needs git's reason, not ours.
+    case 'checkout-refused':
+      return { statusCode: 409, message: detail || 'git refused the checkout' }
+    case 'git-failed':
+      return { statusCode: 500, message: `git failed: ${detail || 'unknown error'}` }
+  }
 }
 
 export const gitRoutes = new Elysia()
@@ -415,6 +445,48 @@ export const gitRoutes = new Elysia()
           'is the HEAD blob, or nothing for an added or untracked file. The requested `path` must be one ' +
           'the working tree itself reports — a membership check, not a pattern — and an unrelated path is ' +
           'rejected with 404.',
+      },
+    },
+  )
+  // The first mutating route. It holds the read routes' membership line (see
+  // `resolveCheckout` in services/git.ts) and adds the cross-origin gate, so a
+  // foreign page in the user's browser cannot fire it at the loopback service.
+  .post(
+    '/api/git/checkout',
+    async ({ body, status }) => {
+      const outcome = await gitService.checkout(body.repo, body.target)
+      if (!outcome.ok) {
+        const { statusCode, message } = checkoutFailureStatusAndMessage(outcome.reason, body.repo, outcome.detail)
+        return status(statusCode, { error: message })
+      }
+      return outcome.result
+    },
+    {
+      body: CheckoutRequestSchema,
+      beforeHandle({ request, status }) {
+        const verdict = checkMutationRequest(request.headers, additionalAllowedHosts)
+        if (!verdict.ok) return status(403, { error: verdict.reason })
+      },
+      response: {
+        200: CheckoutResultSchema,
+        400: GitErrorSchema,
+        403: GitErrorSchema,
+        404: GitErrorSchema,
+        409: GitErrorSchema,
+        500: GitErrorSchema,
+      },
+      detail: {
+        tags: ['git'],
+        summary: 'Check out a branch, tag, or commit',
+        description:
+          'Changes the repository on disk: `git switch` to a local branch, or `git switch --detach` at a tag ' +
+          'or commit (which leaves HEAD on no branch). Every target is validated by membership — a branch ' +
+          'against `refs/heads`, a tag against `refs/tags`, a commit against the history reachable from the ' +
+          "repository's refs — and an unknown one is rejected with 404 before git runs. git's own safety " +
+          'applies: a switch that would overwrite uncommitted changes is refused with 409 carrying git’s ' +
+          'stderr. The request must carry the `X-Git-Graph-Action: 1` header and a JSON body, and a browser ' +
+          'request marked cross-site, or whose `Origin` names a host the server does not answer for, is ' +
+          'refused with 403, so a foreign web page cannot trigger it.',
       },
     },
   )

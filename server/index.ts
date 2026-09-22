@@ -5,6 +5,8 @@ import { z } from 'zod/v4'
 import { additionalAllowedHosts, config, isDev } from './config'
 import { createBindExposurePolicy } from './services/bind-exposure'
 import { listenWithStrategy } from './services/listen'
+import { resolvePublicOrigin } from './services/public-origin'
+import { trustedHostPlugin } from './routes/trusted-host'
 import {
   DiscoveryDocSchema,
   HealthResponseSchema,
@@ -25,19 +27,30 @@ const processStartedAt = new Date()
 // Set the moment `listenWithStrategy` returns, below.
 let boundPort = config.PORT
 
-// Per ADR-0020, discovery URLs must be absolute. Honour the forwarded-* headers
-// Caddy/Vite set so the URLs match the public origin; otherwise fall back to the
-// request's own Host.
+// Per ADR-0020, discovery URLs must be absolute. The forwarded-* headers a proxy
+// sets are honoured only where they name a host the server answers for; see
+// services/public-origin.ts.
 function publicOrigin(request: Request): string {
-  const url = new URL(request.url)
-  const forwardedProto = request.headers.get('x-forwarded-proto')
-  const forwardedHost = request.headers.get('x-forwarded-host')
-  const proto = forwardedProto?.split(',')[0]?.trim() || url.protocol.replace(':', '')
-  const host = forwardedHost?.split(',')[0]?.trim() || request.headers.get('host') || url.host
-  return `${proto}://${host}`
+  return resolvePublicOrigin({
+    requestUrl: request.url,
+    hostHeader: request.headers.get('host'),
+    forwardedProtocolHeader: request.headers.get('x-forwarded-proto'),
+    forwardedHostHeader: request.headers.get('x-forwarded-host'),
+    additionalAllowedHosts,
+  })
 }
 
-const app = new Elysia()
+// `nativeStaticResponse: false` is load-bearing for the Host guard below. By
+// default Elysia hands a route whose handler is a fixed `Response` — the Scalar
+// page at /api/docs is one — to Bun as a native static route, which answers
+// without running any lifecycle hook, `onRequest` included. That route would
+// then answer a rebound Host; with native statics off every route goes through
+// the guard (pinned in index.test.ts).
+const app = new Elysia({ nativeStaticResponse: false })
+  // Issue #5: answer only for the names this server is reachable under, so a
+  // DNS-rebound page gets nothing — not the docs, not a git read, not a
+  // checkout. Mounted first; see routes/trusted-host.ts.
+  .use(trustedHostPlugin({ additionalAllowedHosts }))
   // ADR-0020: human docs at /api/docs, machine spec at /api/openapi.json.
   .use(
     openapi({
@@ -54,12 +67,13 @@ const app = new Elysia()
           version: SERVICE_VERSION,
           description:
             'A local git commit-graph viewer. Lists the repositories at a served root and ' +
-            'returns their parsed commit history for graph rendering.\n\n' +
+            'returns their parsed commit history for graph rendering, and checks out a ' +
+            'branch, tag, or commit on request — the one route that changes a repository.\n\n' +
             'Discovery entrypoint: `GET /api` (ADR-0020).',
         },
         tags: [
           { name: 'system', description: 'Discovery, liveness, and metadata endpoints.' },
-          { name: 'git', description: 'Repository listing and commit history.' },
+          { name: 'git', description: 'Repository listing, commit history, and checkout.' },
         ],
       },
     }),

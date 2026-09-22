@@ -745,3 +745,142 @@ describe('readWorkingFileDiff', () => {
     })
   })
 })
+
+// The first write. Each test builds its own repository, because a checkout
+// changes the state the next test would start from. What is pinned: each target
+// kind lands HEAD where it should, every target git's own listings do not name is
+// refused *before* git runs (HEAD untouched afterwards), and git's refusal of a
+// switch over uncommitted changes comes back with git's stderr, the changes
+// intact.
+describe('checkout', () => {
+  const service = () => createGitService({ rootAbsolutePath: scratchRoot })
+  let fixtureCount = 0
+
+  const gitOutput = (repositoryPath: string, ...gitArguments: string[]) =>
+    Bun.spawnSync(['git', '-C', repositoryPath, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', ...gitArguments], {
+      env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' },
+    })
+      .stdout.toString()
+      .trim()
+
+  /**
+   * `main` (checked out) one commit past `base`, which carries the annotated tag
+   * `v1`; `feature` changes `tracked.txt` off `base`; `twin` is both a branch (at
+   * main) and a tag (at base), so a tag checkout that resolved the short name
+   * would land on the wrong commit; `origin/published` exists only as a
+   * remote-tracking ref; and `dangling` is a commit no ref or HEAD reaches.
+   */
+  function createCheckoutFixture() {
+    fixtureCount += 1
+    const repositoryName = `checkout-repo-${fixtureCount}`
+    const repositoryPath = join(scratchRoot, repositoryName)
+    runGit(scratchRoot, 'init', '-b', 'main', repositoryPath)
+    writeFileSync(join(repositoryPath, 'tracked.txt'), 'base\n')
+    runGit(repositoryPath, 'add', '-A')
+    runGit(repositoryPath, 'commit', '-m', 'base')
+    runGit(repositoryPath, 'tag', '-a', '-m', 'first release', 'v1')
+    runGit(repositoryPath, 'tag', 'twin')
+    runGit(repositoryPath, 'checkout', '-b', 'feature')
+    writeFileSync(join(repositoryPath, 'tracked.txt'), 'feature\n')
+    runGit(repositoryPath, 'commit', '-am', 'feature change')
+    runGit(repositoryPath, 'checkout', 'main')
+    runGit(repositoryPath, 'commit', '--allow-empty', '-m', 'main second')
+    runGit(repositoryPath, 'branch', 'twin')
+    runGit(repositoryPath, 'remote', 'add', 'origin', 'https://example.invalid/c.git')
+    runGit(repositoryPath, 'update-ref', 'refs/remotes/origin/published', 'feature')
+    const dangling = gitOutput(repositoryPath, 'commit-tree', 'HEAD^{tree}', '-m', 'dangling')
+    return {
+      repositoryName,
+      repositoryPath,
+      dangling,
+      fullHashOf: (revision: string) => gitOutput(repositoryPath, 'rev-parse', `${revision}^{commit}`),
+      currentBranch: () => gitOutput(repositoryPath, 'branch', '--show-current'),
+      headHash: () => gitOutput(repositoryPath, 'rev-parse', 'HEAD'),
+    }
+  }
+
+  test('checks out a local branch: HEAD follows it', async () => {
+    const fixture = createCheckoutFixture()
+    const outcome = await service().checkout(fixture.repositoryName, { kind: 'branch', name: 'feature' })
+    if (!outcome.ok) throw new Error(`expected ok, got ${outcome.reason}: ${outcome.detail}`)
+    expect(outcome.result.branch).toBe('feature')
+    expect(fixture.fullHashOf('feature').startsWith(outcome.result.head)).toBe(true)
+    expect(outcome.result.message).toBe("Switched to branch 'feature'")
+    expect(fixture.currentBranch()).toBe('feature')
+  })
+
+  test('checks out a tag by its full refname: HEAD detaches at the tagged commit, not a same-named branch', async () => {
+    const fixture = createCheckoutFixture()
+    const annotated = await service().checkout(fixture.repositoryName, { kind: 'tag', name: 'v1' })
+    if (!annotated.ok) throw new Error(`expected ok, got ${annotated.reason}: ${annotated.detail}`)
+    expect(annotated.result.branch).toBeNull()
+    expect(fixture.headHash()).toBe(fixture.fullHashOf('v1'))
+    // One line of git's report, not the multi-line detached-HEAD advice.
+    expect(annotated.result.message).toStartWith('HEAD is now at')
+
+    const twin = await service().checkout(fixture.repositoryName, { kind: 'tag', name: 'twin' })
+    expect(twin.ok).toBe(true)
+    expect(fixture.headHash()).toBe(fixture.fullHashOf('refs/tags/twin'))
+    expect(fixture.headHash()).not.toBe(fixture.fullHashOf('refs/heads/twin'))
+  })
+
+  test('checks out a commit by full or abbreviated hash: HEAD detaches there', async () => {
+    const fixture = createCheckoutFixture()
+    const featureHash = fixture.fullHashOf('feature')
+    const full = await service().checkout(fixture.repositoryName, { kind: 'commit', hash: featureHash })
+    if (!full.ok) throw new Error(`expected ok, got ${full.reason}: ${full.detail}`)
+    expect(full.result.branch).toBeNull()
+    expect(fixture.headHash()).toBe(featureHash)
+
+    const baseHash = fixture.fullHashOf('v1')
+    const abbreviated = await service().checkout(fixture.repositoryName, {
+      kind: 'commit',
+      hash: baseHash.slice(0, 10).toUpperCase(),
+    })
+    expect(abbreviated.ok).toBe(true)
+    expect(fixture.headHash()).toBe(baseHash)
+  })
+
+  test('refuses every target git’s own listings do not name, before git runs', async () => {
+    const fixture = createCheckoutFixture()
+    const headBefore = fixture.headHash()
+    const refused = [
+      [{ kind: 'branch', name: 'nope' }, 'unknown-ref'],
+      // Only a remote-tracking ref: never guessed into a new tracking branch.
+      [{ kind: 'branch', name: 'published' }, 'unknown-ref'],
+      [{ kind: 'branch', name: 'origin/published' }, 'unknown-ref'],
+      // A tag is not a branch, and a branch is not a tag.
+      [{ kind: 'branch', name: 'v1' }, 'unknown-ref'],
+      [{ kind: 'tag', name: 'feature' }, 'unknown-ref'],
+      // Option- and revision-shaped strings are simply not in the listing.
+      [{ kind: 'branch', name: '--orphan=evil' }, 'unknown-ref'],
+      [{ kind: 'branch', name: 'main~1' }, 'unknown-ref'],
+      [{ kind: 'tag', name: '../heads/main' }, 'unknown-ref'],
+      // A real commit object that no ref or HEAD reaches is outside the history.
+      [{ kind: 'commit', hash: fixture.dangling }, 'unknown-commit'],
+      [{ kind: 'commit', hash: 'ffffffffff' }, 'unknown-commit'],
+      [{ kind: 'commit', hash: 'HEAD~1' }, 'invalid-hash'],
+    ] as const
+    for (const [target, reason] of refused) {
+      expect(await service().checkout(fixture.repositoryName, target)).toMatchObject({ ok: false, reason })
+    }
+    expect(await service().checkout('../escape', { kind: 'branch', name: 'main' })).toMatchObject({
+      ok: false,
+      reason: 'unknown-repository',
+    })
+    expect(fixture.headHash()).toBe(headBefore)
+    expect(fixture.currentBranch()).toBe('main')
+  })
+
+  test('surfaces git’s refusal to overwrite uncommitted changes, leaving them intact', async () => {
+    const fixture = createCheckoutFixture()
+    writeFileSync(join(fixture.repositoryPath, 'tracked.txt'), 'uncommitted work\n')
+    const outcome = await service().checkout(fixture.repositoryName, { kind: 'branch', name: 'feature' })
+    expect(outcome).toMatchObject({ ok: false, reason: 'checkout-refused' })
+    if (outcome.ok) return
+    expect(outcome.detail).toContain('would be overwritten by checkout')
+    expect(outcome.detail).toContain('tracked.txt')
+    expect(fixture.currentBranch()).toBe('main')
+    expect(await Bun.file(join(fixture.repositoryPath, 'tracked.txt')).text()).toBe('uncommitted work\n')
+  })
+})

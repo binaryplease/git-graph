@@ -6,8 +6,9 @@ import type { GitCommit } from './git.schema'
 // the parser still tolerates it if it does (the subject is the tail join).
 export const FIELD_SEPARATOR = '\x1f'
 
-// %h hash · %p parents · %d ref decorations · %an author · %ad date · %s subject
-export const COMMIT_LOG_PRETTY_FORMAT = ['%h', '%p', '%d', '%an', '%ad', '%s'].join('%x1f')
+// %h hash · %H full hash · %p parents · %d ref decorations · %an author ·
+// %ad date · %s subject
+export const COMMIT_LOG_PRETTY_FORMAT = ['%h', '%H', '%p', '%d', '%an', '%ad', '%s'].join('%x1f')
 
 export const COMMIT_LOG_ARGUMENTS = [
   'log',
@@ -53,17 +54,19 @@ export function parseGitLog(logText: string): GitCommit[] {
   for (const line of logText.split('\n')) {
     if (!line.trim()) continue
     const fields = line.split(FIELD_SEPARATOR)
-    if (fields.length < 6) continue // not a well-formed row — skip quietly
-    const [hash, parentField, decoration, author, date] = fields as [
+    if (fields.length < 7) continue // not a well-formed row — skip quietly
+    const [hash, fullHash, parentField, decoration, author, date] = fields as [
+      string,
       string,
       string,
       string,
       string,
       string,
     ]
-    const subject = fields.slice(5).join(FIELD_SEPARATOR) // subjects may contain the separator
+    const subject = fields.slice(6).join(FIELD_SEPARATOR) // subjects may contain the separator
     commits.push({
       hash: hash.trim(),
+      fullHash: fullHash.trim(),
       parents: parentField.trim() ? parentField.trim().split(/\s+/) : [],
       refs: parseRefDecorations(decoration),
       author: author.trim(),

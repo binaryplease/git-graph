@@ -7,6 +7,14 @@ import { z } from 'zod/v4'
 
 export const GitCommitSchema = z.object({
   hash: z.string().min(1).describe('Abbreviated commit hash (git `%h`).'),
+  fullHash: z
+    .string()
+    .default('')
+    .describe(
+      'Full 40-character commit hash (git `%H`) — what "copy commit hash" hands over and what a ' +
+        'checkout names, since an abbreviation can become ambiguous as history grows. Empty only ' +
+        'when a host builds commits without it.',
+    ),
   parents: z
     .array(z.string())
     .default([])
@@ -358,6 +366,54 @@ export const WorkingFileDiffQuerySchema = WorkingTreeQuerySchema.extend({
     ),
 })
 export type WorkingFileDiffQuery = z.infer<typeof WorkingFileDiffQuerySchema>
+
+// What a checkout moves HEAD to — the first git *write* the service offers. The
+// ref names carry no pattern on purpose: the guard is membership (a branch must
+// be one `for-each-ref refs/heads` lists, a tag one `refs/tags` lists), and a
+// pattern strict enough to mean anything would refuse legal names such as the
+// tag `v1,rc` that git itself accepts. A commit hash is hexadecimal and must
+// resolve to a commit in the history the graph shows (`git log --all`).
+export const CheckoutTargetSchema = z
+  .discriminatedUnion('kind', [
+    z.object({
+      kind: z.literal('branch'),
+      name: z.string().min(1).describe('Local branch to switch to — validated by membership against `refs/heads`.'),
+    }),
+    z.object({
+      kind: z.literal('tag'),
+      name: z.string().min(1).describe('Tag to detach HEAD at — validated by membership against `refs/tags`.'),
+    }),
+    z.object({
+      kind: z.literal('commit'),
+      hash: z
+        .string()
+        .regex(/^[0-9a-fA-F]{4,40}$/, 'must be an abbreviated or full hexadecimal commit hash')
+        .describe('Commit to detach HEAD at — must resolve to a commit reachable from a ref or HEAD.'),
+    }),
+  ])
+  .describe('What to check out: a local branch (HEAD follows it), or a tag or commit (HEAD detaches there).')
+export type CheckoutTarget = z.infer<typeof CheckoutTargetSchema>
+
+export const CheckoutRequestSchema = z.object({
+  repo: z.string().default('').describe('Repository identifier: the `relativePath` from the repository listing.'),
+  target: CheckoutTargetSchema,
+})
+export type CheckoutRequest = z.infer<typeof CheckoutRequestSchema>
+
+export const CheckoutResultSchema = z.object({
+  repository: z.string().describe('Display name of the repository that was checked out.'),
+  head: z.string().describe('Abbreviated hash HEAD points at after the checkout.'),
+  branch: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe('The branch now checked out, or null when HEAD is detached (ADR-0024).'),
+  message: z
+    .string()
+    .default('')
+    .describe("git's own one-line report of what it did, e.g. `Switched to branch 'main'`."),
+})
+export type CheckoutResult = z.infer<typeof CheckoutResultSchema>
 
 export const GitErrorSchema = z.object({
   error: z.string().describe('Human-readable description of what went wrong.'),

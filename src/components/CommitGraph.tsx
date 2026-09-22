@@ -1,8 +1,16 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from 'react'
 import type { GitCommit } from '../../shared/git.schema'
 import { computeGraphLayout } from '../../shared/graphLayout'
 import { fuzzyHighlight, type FuzzyHighlight } from '../../shared/fuzzy'
-import { groupRefDecorations } from '../../shared/refGroup'
+import { groupRefDecorations, type RefGroup } from '../../shared/refGroup'
 import { CommitRefRow } from './RefPill'
 
 // The reusable commit-graph view: commits in, SVG + rows out. It owns no data
@@ -84,6 +92,21 @@ export type CommitGraphStats = {
   matchCount: number | null
 }
 
+/** What a row or pill hands the host when its context menu is asked for. */
+export type CommitContextMenuRequest = {
+  commit: GitCommit
+  /** The commit's refs, grouped exactly as the row renders them. */
+  refGroups: RefGroup[]
+  /** The pill the menu was opened on, or null for the row itself. */
+  focusedGroup: RefGroup | null
+  /** Viewport coordinates to open at: the pointer, or beneath the row's content for the keyboard. */
+  anchor: { x: number; y: number }
+}
+
+/** Shift+F10 and the dedicated context-menu key — the keyboard's right-click. */
+const isContextMenuKey = (event: KeyboardEvent) =>
+  event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)
+
 export type CommitGraphProps = {
   /** Commits in topological order (children before all of their parents). */
   commits: GitCommit[]
@@ -114,6 +137,14 @@ export type CommitGraphProps = {
    * is showing the detail elsewhere (e.g. a docked sidebar), or nothing at all.
    */
   selectedDetail?: ReactNode
+  /**
+   * Opens the host's context menu (`GitActionMenu`) for a row or one of its ref
+   * pills. When set, a right-click on a row or pill — or Shift+F10 / the
+   * context-menu key on a focused row — asks for it, and the browser's own menu
+   * is suppressed over exactly those targets, nowhere else. Absent → rows keep
+   * the browser's menu.
+   */
+  onContextMenu?: (request: CommitContextMenuRequest) => void
 }
 
 export function CommitGraph({
@@ -124,6 +155,7 @@ export function CommitGraph({
   selectedHash = null,
   onSelectCommit,
   selectedDetail = null,
+  onContextMenu,
 }: CommitGraphProps) {
   const layout = useMemo(() => computeGraphLayout(commits), [commits])
   const visibleHashes = useMemo(() => new Set(commits.map((commit) => commit.hash)), [commits])
@@ -259,17 +291,55 @@ export function CommitGraph({
             <button
               type="button"
               aria-current={commit.hash === selectedHash ? 'true' : undefined}
+              aria-keyshortcuts={onContextMenu ? 'Shift+F10' : undefined}
               className={`flex w-full cursor-pointer items-center gap-2 pr-4 text-left whitespace-nowrap hover:bg-rowhover ${
                 commit.hash === selectedHash ? 'bg-rowselected' : ''
               } ${searchQuery && !matched ? 'opacity-25 hover:opacity-60' : ''}`}
               style={{ height: ROW_HEIGHT, paddingLeft: graphContentLeft(layout.laneCount) }}
               onClick={() => onSelectCommit?.(commit)}
+              onContextMenu={
+                onContextMenu &&
+                ((event) => {
+                  event.preventDefault()
+                  onContextMenu({
+                    commit,
+                    refGroups,
+                    focusedGroup: null,
+                    anchor: { x: event.clientX, y: event.clientY },
+                  })
+                })
+              }
+              onKeyDown={
+                onContextMenu &&
+                ((event) => {
+                  if (!isContextMenuKey(event)) return
+                  // Handled here so the browser's own menu never opens as well.
+                  event.preventDefault()
+                  const bounds = event.currentTarget.getBoundingClientRect()
+                  onContextMenu({
+                    commit,
+                    refGroups,
+                    focusedGroup: null,
+                    anchor: { x: bounds.left + graphContentLeft(layout.laneCount), y: bounds.bottom },
+                  })
+                })
+              }
             >
               {/* The row's refs as one cluster — ring and pills, arranged once
                   in CommitRefRow rather than re-placed per surface (ADR-0027). */}
               <CommitRefRow
                 groups={refGroups}
                 laneColor={laneColor(layout.placements[row]!.lane)}
+                onRefContextMenu={
+                  onContextMenu &&
+                  ((group, event) =>
+                    onContextMenu({
+                      commit,
+                      refGroups,
+                      focusedGroup: group,
+                      anchor: { x: event.clientX, y: event.clientY },
+                    }))
+                }
               />
               <span className="min-w-0 flex-1 truncate">
                 <FuzzySegments highlight={subject} />

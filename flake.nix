@@ -223,6 +223,10 @@
                 Host name(s) the operator acknowledges when `host` is non-loopback
                 (ADR-0037 §4). Required as the explicit acknowledgement that an
                 authenticating reverse proxy fronts this unauthenticated API.
+                Also the per-request allowlist (the DNS-rebinding guard): the
+                service answers only for a loopback `Host` or one of these names,
+                so a reverse proxy that passes its public host through — Caddy's
+                default — needs that name here even on the loopback `host`.
               '';
             };
 
