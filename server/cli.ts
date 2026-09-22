@@ -227,7 +227,7 @@ async function runStatus(): Promise<never> {
   const baseUrl = baseUrlForState(probe.state)
   try {
     const status = await fetch(`${baseUrl}/api/status`).then((response) => response.json())
-    console.log(`  serving:    ${status.root}`)
+    console.log(`  serving:    ${status.root ?? `the repositories listed in ${status.repositoriesFile}`}`)
     console.log(`  uptime:     ${status.uptimeSeconds}s (since ${status.startedAt})`)
     console.log(`  listening:  ${status.host}:${status.port}`)
     console.log(`\n  Discovery`)

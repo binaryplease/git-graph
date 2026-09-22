@@ -29,6 +29,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`buildGitMenuSections`, `describeCheckout`) lives in `git-graph/shared`.
   `CommitGraph` gains an `onContextMenu` seam, and `GitCommit` gains `fullHash`
   (git `%H`). ([#2], [#12])
+- **git-graph's own server can now be an embedding host's backend, reads and
+  checkout alike.** This lets a host (nightshift-ui first) stop maintaining its
+  own copy of the git layer ([#8]). Two launch settings do it, and both are off
+  by default:
+  - `GIT_GRAPH_REPOSITORIES_FILE` names a file listing the absolute paths of
+    the repositories to serve, one per line, wherever they are on disk. When it
+    is set, the served root is not scanned. The repository identifier becomes
+    the normalised absolute path, and `GET /api/git/repos` reports
+    `rootPath: null`. The file is re-read on every request, so the set can
+    change without a restart. A request can only name a member of the set; it
+    can never widen it. A missing file or a relative path is a fatal startup
+    error.
+  - `GIT_GRAPH_ALLOWED_ORIGINS` names the exact origins of the pages that embed
+    the graph, for example `http://127.0.0.1:3115`. Those origins, and only
+    those, get CORS headers on `/api/*` responses (errors included), a granted
+    preflight for `POST /api/git/checkout`, and a checkout sent `same-site` or
+    `cross-site`. The custom header, the JSON body, the Host guard, the
+    membership checks and the loopback bind all still apply. Any other origin
+    is refused exactly as before. A malformed entry is a fatal startup error.
+
+  `/api/status` now reports `repositoriesFile` and `allowedOrigins`, and its
+  `root` is null when a repositories file is served. The host-side contract is in
+  [`docs/embedding-host.md`](docs/embedding-host.md).
 
 ### Security
 
@@ -163,6 +186,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#1]: https://github.com/binaryplease/git-graph/issues/1
 [#2]: https://github.com/binaryplease/git-graph/issues/2
 [#5]: https://github.com/binaryplease/git-graph/issues/5
+[#8]: https://github.com/binaryplease/git-graph/issues/8
 [#6]: https://github.com/binaryplease/git-graph/pull/6
 [#9]: https://github.com/binaryplease/git-graph/pull/9
 [#10]: https://github.com/binaryplease/git-graph/issues/10

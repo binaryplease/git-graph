@@ -18,23 +18,29 @@ const clientHeaders = () =>
     [MUTATION_REQUEST_HEADER]: MUTATION_REQUEST_HEADER_VALUE,
   })
 
+const noAllowlists = { additionalAllowedHosts: [], allowedOrigins: [] }
+const proxiedAllowlists = { additionalAllowedHosts: ['graph.example.com'], allowedOrigins: [] }
+
+const EMBEDDING_ORIGIN = 'http://127.0.0.1:3115'
+const embeddingAllowlists = { additionalAllowedHosts: [], allowedOrigins: [EMBEDDING_ORIGIN] }
+
 describe('checkMutationRequest', () => {
   test('admits the request the git-graph client sends', () => {
-    expect(checkMutationRequest(clientHeaders(), [])).toEqual({ ok: true })
+    expect(checkMutationRequest(clientHeaders(), noAllowlists)).toEqual({ ok: true })
   })
 
   test('admits a same-origin browser request, and a non-browser one that sends no Sec-Fetch-Site', () => {
     const sameOrigin = clientHeaders()
     sameOrigin.set('sec-fetch-site', 'same-origin')
-    expect(checkMutationRequest(sameOrigin, []).ok).toBe(true)
-    expect(checkMutationRequest(clientHeaders(), []).ok).toBe(true)
+    expect(checkMutationRequest(sameOrigin, noAllowlists).ok).toBe(true)
+    expect(checkMutationRequest(clientHeaders(), noAllowlists).ok).toBe(true)
   })
 
   test('refuses a request the browser marks as cross-site or same-site, even with the header', () => {
     for (const fetchSite of ['cross-site', 'same-site', 'none']) {
       const headers = clientHeaders()
       headers.set('sec-fetch-site', fetchSite)
-      const verdict = checkMutationRequest(headers, [])
+      const verdict = checkMutationRequest(headers, noAllowlists)
       expect(verdict.ok).toBe(false)
     }
   })
@@ -43,11 +49,11 @@ describe('checkMutationRequest', () => {
     for (const origin of ['http://localhost:5183', 'http://127.0.0.1:3010', 'http://[::1]:3010']) {
       const headers = clientHeaders()
       headers.set('origin', origin)
-      expect(checkMutationRequest(headers, []).ok).toBe(true)
+      expect(checkMutationRequest(headers, noAllowlists).ok).toBe(true)
     }
     const proxied = clientHeaders()
     proxied.set('origin', 'https://graph.example.com')
-    expect(checkMutationRequest(proxied, ['graph.example.com']).ok).toBe(true)
+    expect(checkMutationRequest(proxied, proxiedAllowlists).ok).toBe(true)
   })
 
   // NST11963 finding 3: with no Sec-Fetch-Site to go on, a foreign Origin was
@@ -56,31 +62,81 @@ describe('checkMutationRequest', () => {
     for (const origin of ['http://evil.example', 'http://evil.localhost:3010', 'null', 'file://', 'not a url']) {
       const headers = clientHeaders()
       headers.set('origin', origin)
-      const verdict = checkMutationRequest(headers, ['graph.example.com'])
+      const verdict = checkMutationRequest(headers, proxiedAllowlists)
       expect(verdict.ok).toBe(false)
     }
     const proxiedElsewhere = clientHeaders()
     proxiedElsewhere.set('origin', 'https://graph.example.com')
-    expect(checkMutationRequest(proxiedElsewhere, []).ok).toBe(false)
+    expect(checkMutationRequest(proxiedElsewhere, noAllowlists).ok).toBe(false)
+  })
+
+  test('with no embedding origins configured, a cross-site request stays refused whatever its Origin', () => {
+    const headers = clientHeaders()
+    headers.set('origin', EMBEDDING_ORIGIN)
+    headers.set('sec-fetch-site', 'same-site')
+    expect(checkMutationRequest(headers, noAllowlists).ok).toBe(false)
+  })
+
+  test('admits a configured embedding host marked same-site or cross-site, and only by its exact Origin', () => {
+    for (const fetchSite of ['same-site', 'cross-site']) {
+      const headers = clientHeaders()
+      headers.set('origin', EMBEDDING_ORIGIN)
+      headers.set('sec-fetch-site', fetchSite)
+      expect(checkMutationRequest(headers, embeddingAllowlists)).toEqual({ ok: true })
+    }
+    // A neighbour of the listed origin — another port, the other loopback name,
+    // another scheme, a trailing slash — is not it.
+    for (const origin of ['http://127.0.0.1:3116', 'http://localhost:3115', 'https://127.0.0.1:3115', `${EMBEDDING_ORIGIN}/`]) {
+      const headers = clientHeaders()
+      headers.set('origin', origin)
+      headers.set('sec-fetch-site', 'same-site')
+      expect(checkMutationRequest(headers, embeddingAllowlists).ok).toBe(false)
+    }
+    // A cross-site request with no Origin at all names no embedding host.
+    const originless = clientHeaders()
+    originless.set('sec-fetch-site', 'cross-site')
+    expect(checkMutationRequest(originless, embeddingAllowlists).ok).toBe(false)
+  })
+
+  test('a listed non-loopback embedding origin is admitted without being a served Host', () => {
+    const headers = clientHeaders()
+    headers.set('origin', 'https://ui.example.com')
+    headers.set('sec-fetch-site', 'cross-site')
+    const allowlists = { additionalAllowedHosts: [], allowedOrigins: ['https://ui.example.com'] }
+    expect(checkMutationRequest(headers, allowlists).ok).toBe(true)
+    expect(checkMutationRequest(headers, noAllowlists).ok).toBe(false)
+  })
+
+  test('the embedding exception relaxes nothing else — the custom header and JSON body are still required', () => {
+    const withoutHeader = clientHeaders()
+    withoutHeader.delete(MUTATION_REQUEST_HEADER)
+    withoutHeader.set('origin', EMBEDDING_ORIGIN)
+    withoutHeader.set('sec-fetch-site', 'cross-site')
+    expect(checkMutationRequest(withoutHeader, embeddingAllowlists).ok).toBe(false)
+    const formBody = clientHeaders()
+    formBody.set('content-type', 'text/plain')
+    formBody.set('origin', EMBEDDING_ORIGIN)
+    formBody.set('sec-fetch-site', 'cross-site')
+    expect(checkMutationRequest(formBody, embeddingAllowlists).ok).toBe(false)
   })
 
   test('refuses a request without the custom header — what a plain form post looks like', () => {
     const headers = clientHeaders()
     headers.delete(MUTATION_REQUEST_HEADER)
-    expect(checkMutationRequest(headers, []).ok).toBe(false)
+    expect(checkMutationRequest(headers, noAllowlists).ok).toBe(false)
     headers.set(MUTATION_REQUEST_HEADER, 'yes')
-    expect(checkMutationRequest(headers, []).ok).toBe(false)
+    expect(checkMutationRequest(headers, noAllowlists).ok).toBe(false)
   })
 
   test('refuses a body that is not JSON — the content types a page may send without a preflight', () => {
     for (const contentType of ['text/plain', 'application/x-www-form-urlencoded', 'multipart/form-data', '']) {
       const headers = clientHeaders()
       headers.set('content-type', contentType)
-      expect(checkMutationRequest(headers, []).ok).toBe(false)
+      expect(checkMutationRequest(headers, noAllowlists).ok).toBe(false)
     }
     const withCharset = clientHeaders()
     withCharset.set('content-type', 'application/json; charset=utf-8')
-    expect(checkMutationRequest(withCharset, []).ok).toBe(true)
+    expect(checkMutationRequest(withCharset, noAllowlists).ok).toBe(true)
   })
 })
 
@@ -98,7 +154,7 @@ describe('the guard on an Elysia route', () => {
     {
       body: z.object({ repo: z.string() }),
       beforeHandle({ request, status }) {
-        const verdict = checkMutationRequest(request.headers, [])
+        const verdict = checkMutationRequest(request.headers, noAllowlists)
         if (!verdict.ok) return status(403, { error: verdict.reason })
       },
     },

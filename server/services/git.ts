@@ -1,6 +1,4 @@
-import { existsSync } from 'node:fs'
-import { readdir } from 'node:fs/promises'
-import { basename, join, resolve } from 'node:path'
+import { join } from 'node:path'
 import { COMMIT_LOG_ARGUMENTS, parseGitLog } from '../../shared/gitLog'
 import {
   COMMIT_DETAIL_ARGUMENTS,
@@ -27,6 +25,7 @@ import {
   WORKING_SUMMARY_ARGUMENTS,
   isBinaryNoIndexPatch,
 } from '../../shared/workingTree'
+import type { RepositorySet, ServedRepository } from './repository-set'
 import { checkoutArguments, type ResolvedCheckout } from '../../shared/checkout'
 import { MAX_FILE_CHANGES, parseCommitFileChanges } from '../../shared/commitDetail'
 import { FIELD_SEPARATOR } from '../../shared/gitLog'
@@ -40,7 +39,6 @@ import type {
   CompareSummary,
   FileDiff,
   RepositoryList,
-  RepositorySummary,
   WorkingTree,
 } from '../../shared/git.schema'
 
@@ -126,40 +124,23 @@ const nonEmptyLines = (stdout: string) =>
     .map((line) => line.trim())
     .filter(Boolean)
 
-// A `.git` entry marks a repository — a directory for normal clones, a file
-// for worktrees and submodules. Both render fine, so both count.
-const isGitRepository = (directoryPath: string) => existsSync(join(directoryPath, '.git'))
-
-export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: string }) {
-  const servedRoot = resolve(rootAbsolutePath)
-  if (!existsSync(servedRoot)) {
-    throw new Error(`git-graph root does not exist: ${servedRoot}`)
-  }
-
-  /** Repositories at the served root: the root itself (if it is one) plus direct children. */
+export function createGitService({ repositories: repositorySet }: { repositories: RepositorySet }) {
+  /** The served repositories as the listing route reports them (no disk paths). */
   async function listRepositories(): Promise<RepositoryList> {
-    const repositories: RepositorySummary[] = []
-    if (isGitRepository(servedRoot)) {
-      repositories.push({ name: basename(servedRoot), relativePath: '' })
+    const { rootPath, repositories } = await repositorySet.list()
+    return {
+      rootPath,
+      repositories: repositories.map(({ name, relativePath }) => ({ name, relativePath })),
     }
-    const entries = await readdir(servedRoot, { withFileTypes: true })
-    for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name.startsWith('.')) continue
-      if (isGitRepository(join(servedRoot, entry.name))) {
-        repositories.push({ name: entry.name, relativePath: entry.name })
-      }
-    }
-    repositories.sort((first, second) => first.name.localeCompare(second.name))
-    return { rootPath: servedRoot, repositories }
   }
 
   /**
-   * Resolve a repository identifier from the listing. Identifiers are always
+   * Resolve a repository identifier from the served set. Identifiers are always
    * re-validated against it, so arbitrary paths can never reach the shell.
    */
-  async function resolveRepository(repositoryRelativePath: string) {
-    const { repositories } = await listRepositories()
-    return repositories.find((candidate) => candidate.relativePath === repositoryRelativePath)
+  async function resolveRepository(repositoryIdentifier: string): Promise<ServedRepository | undefined> {
+    const { repositories } = await repositorySet.list()
+    return repositories.find((candidate) => candidate.relativePath === repositoryIdentifier)
   }
 
   /** Run git in a resolved repository and collect its output. */
@@ -246,15 +227,15 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
    * --topo-order`.
    */
   async function readCommitLog(
-    repositoryRelativePath: string,
+    repositoryIdentifier: string,
     { limit }: { limit: number },
   ): Promise<ReadCommitLogResult> {
-    const repository = await resolveRepository(repositoryRelativePath)
+    const repository = await resolveRepository(repositoryIdentifier)
     if (!repository) return { ok: false, reason: 'unknown-repository' }
 
     // The log and the remote names are independent reads the same response
     // needs, so they run as one round trip rather than back to back.
-    const repositoryPath = join(servedRoot, repository.relativePath)
+    const repositoryPath = repository.absolutePath
     const [{ stdout, stderr, exitCode }, remotes] = await Promise.all([
       runGit(repositoryPath, [...COMMIT_LOG_ARGUMENTS, '-n', String(limit)]),
       readRemoteNames(repositoryPath),
@@ -286,18 +267,18 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
    * as an option or a path.
    */
   async function readCommitDetail(
-    repositoryRelativePath: string,
+    repositoryIdentifier: string,
     commitHash: string,
   ): Promise<ReadCommitDetailResult> {
     if (!COMMIT_HASH_PATTERN.test(commitHash)) return { ok: false, reason: 'invalid-hash' }
 
-    const repository = await resolveRepository(repositoryRelativePath)
+    const repository = await resolveRepository(repositoryIdentifier)
     if (!repository) return { ok: false, reason: 'unknown-repository' }
 
     // Like the commit log, the detail carries the repository's remote names so
     // the refs it reports can be classified and grouped by whoever renders them
     // — the standalone commit tab has no other payload to learn them from.
-    const repositoryPath = join(servedRoot, repository.relativePath)
+    const repositoryPath = repository.absolutePath
     const [shown, remotes] = await Promise.all([
       showCommit(repositoryPath, commitHash),
       readRemoteNames(repositoryPath),
@@ -352,16 +333,16 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
    * hash still goes through {@link COMMIT_HASH_PATTERN}.
    */
   async function readFileDiff(
-    repositoryRelativePath: string,
+    repositoryIdentifier: string,
     commitHash: string,
     filePath: string,
   ): Promise<ReadFileDiffResult> {
     if (!COMMIT_HASH_PATTERN.test(commitHash)) return { ok: false, reason: 'invalid-hash' }
 
-    const repository = await resolveRepository(repositoryRelativePath)
+    const repository = await resolveRepository(repositoryIdentifier)
     if (!repository) return { ok: false, reason: 'unknown-repository' }
 
-    const repositoryPath = join(servedRoot, repository.relativePath)
+    const repositoryPath = repository.absolutePath
     const shown = await showCommit(repositoryPath, commitHash)
     if (!shown.ok) return shown
 
@@ -494,11 +475,11 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
   }
 
   /** List the local branches of one listed repository, default branch first. */
-  async function readBranches(repositoryRelativePath: string): Promise<ReadBranchesResult> {
-    const repository = await resolveRepository(repositoryRelativePath)
+  async function readBranches(repositoryIdentifier: string): Promise<ReadBranchesResult> {
+    const repository = await resolveRepository(repositoryIdentifier)
     if (!repository) return { ok: false, reason: 'unknown-repository' }
 
-    const data = await readBranchData(join(servedRoot, repository.relativePath))
+    const data = await readBranchData(repository.absolutePath)
     if (!data.ok) return { ok: false, reason: 'git-failed', detail: data.detail }
 
     const branches = data.branchNames
@@ -526,11 +507,11 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
    * discipline the file-diff path uses — so only names git itself produced ever
    * reach the shell. An empty base means "the default branch".
    */
-  async function resolveComparison(repositoryRelativePath: string, headRef: string, baseRef: string) {
-    const repository = await resolveRepository(repositoryRelativePath)
+  async function resolveComparison(repositoryIdentifier: string, headRef: string, baseRef: string) {
+    const repository = await resolveRepository(repositoryIdentifier)
     if (!repository) return { ok: false as const, reason: 'unknown-repository' as const }
 
-    const repositoryPath = join(servedRoot, repository.relativePath)
+    const repositoryPath = repository.absolutePath
     const data = await readBranchData(repositoryPath)
     if (!data.ok) return { ok: false as const, reason: 'git-failed' as const, detail: data.detail }
 
@@ -554,11 +535,11 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
    * parser, since `git diff --raw --numstat` produces the same wire format.
    */
   async function readCompareSummary(
-    repositoryRelativePath: string,
+    repositoryIdentifier: string,
     headRef: string,
     baseRef: string,
   ): Promise<ReadCompareSummaryResult> {
-    const comparison = await resolveComparison(repositoryRelativePath, headRef, baseRef)
+    const comparison = await resolveComparison(repositoryIdentifier, headRef, baseRef)
     if (!comparison.ok) return comparison
 
     const { repositoryPath, base, head, mergeBase } = comparison
@@ -587,12 +568,12 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
    * which is what makes the diff match the three-dot summary.
    */
   async function readCompareFileDiff(
-    repositoryRelativePath: string,
+    repositoryIdentifier: string,
     headRef: string,
     baseRef: string,
     filePath: string,
   ): Promise<ReadCompareFileDiffResult> {
-    const comparison = await resolveComparison(repositoryRelativePath, headRef, baseRef)
+    const comparison = await resolveComparison(repositoryIdentifier, headRef, baseRef)
     if (!comparison.ok) return comparison
 
     const { repositoryPath, base, head, mergeBase } = comparison
@@ -725,11 +706,11 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
   }
 
   /** The uncommitted changes of one listed repository — the working-tree file list. */
-  async function readWorkingTree(repositoryRelativePath: string): Promise<ReadWorkingTreeResult> {
-    const repository = await resolveRepository(repositoryRelativePath)
+  async function readWorkingTree(repositoryIdentifier: string): Promise<ReadWorkingTreeResult> {
+    const repository = await resolveRepository(repositoryIdentifier)
     if (!repository) return { ok: false, reason: 'unknown-repository' }
 
-    const changes = await collectWorkingChanges(join(servedRoot, repository.relativePath))
+    const changes = await collectWorkingChanges(repository.absolutePath)
     if (!changes.ok) return { ok: false, reason: 'git-failed', detail: changes.detail }
 
     return {
@@ -753,13 +734,13 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
    * is the HEAD blob, or nothing for an added or untracked file.
    */
   async function readWorkingFileDiff(
-    repositoryRelativePath: string,
+    repositoryIdentifier: string,
     filePath: string,
   ): Promise<ReadWorkingFileDiffResult> {
-    const repository = await resolveRepository(repositoryRelativePath)
+    const repository = await resolveRepository(repositoryIdentifier)
     if (!repository) return { ok: false, reason: 'unknown-repository' }
 
-    const repositoryPath = join(servedRoot, repository.relativePath)
+    const repositoryPath = repository.absolutePath
     const changes = await collectWorkingChanges(repositoryPath)
     if (!changes.ok) return { ok: false, reason: 'git-failed', detail: changes.detail }
 
@@ -903,11 +884,11 @@ export function createGitService({ rootAbsolutePath }: { rootAbsolutePath: strin
    * carrying git's stderr verbatim, so the user reads git's reason rather than
    * ours.
    */
-  async function checkout(repositoryRelativePath: string, target: CheckoutTarget): Promise<CheckoutOutcome> {
-    const repository = await resolveRepository(repositoryRelativePath)
+  async function checkout(repositoryIdentifier: string, target: CheckoutTarget): Promise<CheckoutOutcome> {
+    const repository = await resolveRepository(repositoryIdentifier)
     if (!repository) return { ok: false, reason: 'unknown-repository' }
 
-    const repositoryPath = join(servedRoot, repository.relativePath)
+    const repositoryPath = repository.absolutePath
     const resolved = await resolveCheckout(repositoryPath, target)
     if (!resolved.ok) return resolved
 

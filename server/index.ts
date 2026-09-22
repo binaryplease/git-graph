@@ -2,10 +2,11 @@ import { join, resolve } from 'node:path'
 import { Elysia } from 'elysia'
 import { openapi } from '@elysiajs/openapi'
 import { z } from 'zod/v4'
-import { additionalAllowedHosts, config, isDev } from './config'
+import { additionalAllowedHosts, allowedOrigins, config, isDev, servedRepositories } from './config'
 import { createBindExposurePolicy } from './services/bind-exposure'
 import { listenWithStrategy } from './services/listen'
 import { resolvePublicOrigin } from './services/public-origin'
+import { corsPlugin } from './routes/cors'
 import { trustedHostPlugin } from './routes/trusted-host'
 import {
   DiscoveryDocSchema,
@@ -51,6 +52,10 @@ const app = new Elysia({ nativeStaticResponse: false })
   // DNS-rebound page gets nothing — not the docs, not a git read, not a
   // checkout. Mounted first; see routes/trusted-host.ts.
   .use(trustedHostPlugin({ additionalAllowedHosts }))
+  // The embedding seam: CORS for exactly the origins in GIT_GRAPH_ALLOWED_ORIGINS
+  // (none by default). After the Host guard, so a rebound name is refused first.
+  // See routes/cors.ts.
+  .use(corsPlugin({ allowedOrigins }))
   // ADR-0020: human docs at /api/docs, machine spec at /api/openapi.json.
   .use(
     openapi({
@@ -126,7 +131,9 @@ const app = new Elysia({ nativeStaticResponse: false })
         startedAt: processStartedAt.toISOString(),
         host: config.HOST,
         port: boundPort,
-        root: config.GIT_GRAPH_ROOT,
+        root: config.GIT_GRAPH_REPOSITORIES_FILE === '' ? config.GIT_GRAPH_ROOT : null,
+        repositoriesFile: config.GIT_GRAPH_REPOSITORIES_FILE === '' ? null : resolve(config.GIT_GRAPH_REPOSITORIES_FILE),
+        allowedOrigins,
       }
     },
     {
@@ -135,7 +142,8 @@ const app = new Elysia({ nativeStaticResponse: false })
         tags: ['system'],
         summary: 'Operational status',
         description:
-          'Served root, uptime, bound port, and process identity of the running server. ' +
+          'Served root (or repositories file), embedding origins, uptime, bound port, and process ' +
+          'identity of the running server. ' +
           'Rendered by `git-graph status`. No auth required.',
       },
     },
@@ -191,7 +199,10 @@ if (config.GIT_GRAPH_READY_FILE) {
 }
 
 const localBase = `http://${config.HOST}:${boundPort}`
-console.log(`${SERVICE_NAME} serving ${config.GIT_GRAPH_ROOT} on ${localBase}`)
+console.log(`${SERVICE_NAME} serving ${servedRepositories.description} on ${localBase}`)
+if (allowedOrigins.length > 0) {
+  console.log(`  embedding origins (CORS + checkout): ${allowedOrigins.join(', ')}`)
+}
 console.log('Discovery')
 console.log(`  docs:      ${localBase}/api/docs`)
 console.log(`  openapi:   ${localBase}/api/openapi.json`)

@@ -1,5 +1,5 @@
 import { Elysia } from 'elysia'
-import { additionalAllowedHosts, config } from '../config'
+import { additionalAllowedHosts, allowedOrigins, servedRepositories } from '../config'
 import { checkMutationRequest } from '../services/mutation-guard'
 import {
   createGitService,
@@ -33,8 +33,9 @@ import {
   WorkingTreeSchema,
 } from '../../shared/git.schema'
 
-// Created at startup so a bad GIT_GRAPH_ROOT crashes the boot, not a request.
-const gitService = createGitService({ rootAbsolutePath: config.GIT_GRAPH_ROOT })
+// Created at startup so a bad GIT_GRAPH_ROOT or repositories file crashes the
+// boot, not a request.
+const gitService = createGitService({ repositories: servedRepositories })
 
 function failureStatusAndMessage(
   reason: ReadCommitLogFailureReason,
@@ -45,7 +46,7 @@ function failureStatusAndMessage(
     case 'unknown-repository':
       return {
         statusCode: 404,
-        message: `no such repository at the served root: ${repositoryIdentifier || '(root)'}`,
+        message: `no such repository among those served: ${repositoryIdentifier || '(root)'}`,
       }
     case 'git-failed':
       return { statusCode: 500, message: `git log failed: ${detail || 'unknown error'}` }
@@ -62,7 +63,7 @@ function detailFailureStatusAndMessage(
     case 'unknown-repository':
       return {
         statusCode: 404,
-        message: `no such repository at the served root: ${repositoryIdentifier || '(root)'}`,
+        message: `no such repository among those served: ${repositoryIdentifier || '(root)'}`,
       }
     case 'unknown-commit':
       return { statusCode: 404, message: `no such commit in this repository: ${commitHash}` }
@@ -101,7 +102,7 @@ function compareFailureStatusAndMessage(
     case 'unknown-repository':
       return {
         statusCode: 404,
-        message: `no such repository at the served root: ${repositoryIdentifier || '(root)'}`,
+        message: `no such repository among those served: ${repositoryIdentifier || '(root)'}`,
       }
     case 'unknown-ref':
       return { statusCode: 404, message: detail || `no such branch in this repository` }
@@ -123,7 +124,7 @@ function workingFailureStatusAndMessage(
   if (reason === 'unknown-repository') {
     return {
       statusCode: 404,
-      message: `no such repository at the served root: ${repositoryIdentifier || '(root)'}`,
+      message: `no such repository among those served: ${repositoryIdentifier || '(root)'}`,
     }
   }
   return { statusCode: 500, message: `git diff failed: ${detail || 'unknown error'}` }
@@ -150,7 +151,7 @@ function checkoutFailureStatusAndMessage(
     case 'unknown-repository':
       return {
         statusCode: 404,
-        message: `no such repository at the served root: ${repositoryIdentifier || '(root)'}`,
+        message: `no such repository among those served: ${repositoryIdentifier || '(root)'}`,
       }
     case 'unknown-ref':
       return { statusCode: 404, message: detail || 'no such ref in this repository' }
@@ -177,10 +178,12 @@ export const gitRoutes = new Elysia()
         tags: ['git'],
         summary: 'List repositories',
         description:
-          'Lists the git repositories found at the served root (`GIT_GRAPH_ROOT`, defaulting to ' +
-          'the home directory of the user running the server): the root itself when it is a ' +
-          'repository, plus its direct children. The returned `relativePath` is the identifier ' +
-          'the commit-log endpoint accepts.',
+          'Lists the git repositories this server serves. By default those found at the served root ' +
+          '(`GIT_GRAPH_ROOT`, defaulting to `~/Developer`): the root itself when it is a repository, plus ' +
+          'its direct children. When `GIT_GRAPH_REPOSITORIES_FILE` is set, exactly the absolute paths that ' +
+          'file names (re-read on every request; a path that is not a repository is left out), and ' +
+          '`rootPath` is null. The returned `relativePath` is the `repo` identifier every other endpoint ' +
+          'accepts; an identifier not in this listing is rejected with 404.',
       },
     },
   )
@@ -464,7 +467,7 @@ export const gitRoutes = new Elysia()
     {
       body: CheckoutRequestSchema,
       beforeHandle({ request, status }) {
-        const verdict = checkMutationRequest(request.headers, additionalAllowedHosts)
+        const verdict = checkMutationRequest(request.headers, { additionalAllowedHosts, allowedOrigins })
         if (!verdict.ok) return status(403, { error: verdict.reason })
       },
       response: {

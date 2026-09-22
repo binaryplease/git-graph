@@ -32,6 +32,19 @@ export const StatusResponseSchema = z.object({
     .describe('ISO-8601 timestamp of when this server process started, or "" if unknown.'),
   host: z.string().default('').describe('Bind address the server is listening on.'),
   port: z.number().int().default(0).describe('Port the server is actually listening on.'),
-  root: z.string().default('').describe('Absolute path of the served root scanned for repositories.'),
+  root: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe('Absolute path of the served root scanned for repositories, or null when a repositories file is served.'),
+  repositoriesFile: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe('Absolute path of the repositories file (GIT_GRAPH_REPOSITORIES_FILE) being served, or null when a root is.'),
+  allowedOrigins: z
+    .array(z.string())
+    .default([])
+    .describe('Exact origins of embedding hosts granted CORS reads and checkout (GIT_GRAPH_ALLOWED_ORIGINS). Empty: none.'),
 })
 export type StatusResponse = z.infer<typeof StatusResponseSchema>

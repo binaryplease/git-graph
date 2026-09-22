@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -23,33 +23,41 @@ let repositoryPath: string
 let serverProcess: ReturnType<typeof Bun.spawn>
 let port: number
 
-function git(...gitArguments: string[]): string {
+function gitIn(repository: string, ...gitArguments: string[]): string {
   const result = Bun.spawnSync(
-    ['git', '-C', repositoryPath, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', ...gitArguments],
+    ['git', '-C', repository, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', ...gitArguments],
     { env: gitEnvironment },
   )
   if (result.exitCode !== 0) throw new Error(`git ${gitArguments.join(' ')} failed: ${result.stderr.toString()}`)
   return result.stdout.toString().trim()
 }
 
-/** Where HEAD is: the full hash and the checked-out branch ref (empty when detached). */
-function headState() {
-  const branch = Bun.spawnSync(['git', '-C', repositoryPath, 'symbolic-ref', '-q', 'HEAD'], { env: gitEnvironment })
-  return { hash: git('rev-parse', 'HEAD'), branch: branch.stdout.toString().trim() }
+const git = (...gitArguments: string[]) => gitIn(repositoryPath, ...gitArguments)
+
+/** A repository with `main` one commit past the annotated tag `v1`. */
+function createTaggedRepository(path: string) {
+  Bun.spawnSync(['git', 'init', '-q', '-b', 'main', path], { env: gitEnvironment })
+  gitIn(path, 'commit', '--allow-empty', '-m', 'tagged')
+  gitIn(path, 'tag', '-a', '-m', 'v1', 'v1')
+  gitIn(path, 'commit', '--allow-empty', '-m', 'tip')
 }
 
-beforeAll(async () => {
-  scratchRoot = mkdtempSync(join(tmpdir(), 'git-graph-host-guard-'))
-  repositoryPath = join(scratchRoot, 'victim')
-  Bun.spawnSync(['git', 'init', '-q', '-b', 'main', repositoryPath], { env: gitEnvironment })
-  git('commit', '--allow-empty', '-m', 'tagged')
-  git('tag', '-a', '-m', 'v1', 'v1')
-  git('commit', '--allow-empty', '-m', 'tip')
+/** Where HEAD is: the full hash and the checked-out branch ref (empty when detached). */
+function headStateOf(repository: string) {
+  const branch = Bun.spawnSync(['git', '-C', repository, 'symbolic-ref', '-q', 'HEAD'], { env: gitEnvironment })
+  return { hash: gitIn(repository, 'rev-parse', 'HEAD'), branch: branch.stdout.toString().trim() }
+}
 
-  // `auto` from a high canonical port, the bound port read back through the
-  // ready-file handshake the CLI uses — no fixed port to collide with.
-  const readyFilePath = join(scratchRoot, 'ready')
-  serverProcess = Bun.spawn(['bun', join(import.meta.dir, 'index.ts'), scratchRoot], {
+const headState = () => headStateOf(repositoryPath)
+
+/**
+ * Launch the real server as its own process, `auto` from a high canonical port,
+ * the bound port read back through the ready-file handshake the CLI uses — no
+ * fixed port to collide with.
+ */
+async function launchServer(options: { root: string; scratch: string; environment: Record<string, string> }) {
+  const readyFilePath = join(options.scratch, 'ready')
+  const launched = Bun.spawn(['bun', join(import.meta.dir, 'index.ts'), options.root], {
     env: {
       ...gitEnvironment,
       NODE_ENV: 'test',
@@ -57,7 +65,7 @@ beforeAll(async () => {
       PORT: String(40000 + Math.floor(Math.random() * 10000)),
       GIT_GRAPH_PORT_STRATEGY: 'auto',
       GIT_GRAPH_READY_FILE: readyFilePath,
-      GIT_GRAPH_ALLOWED_HOSTS: ALLOWED_HOST,
+      ...options.environment,
     },
     stdout: 'ignore',
     stderr: 'ignore',
@@ -65,8 +73,22 @@ beforeAll(async () => {
   // The file can exist a moment before its content lands; wait for a port.
   const readPort = () => (existsSync(readyFilePath) ? Number(readFileSync(readyFilePath, 'utf8').trim()) : 0)
   for (let attempt = 0; attempt < 400 && !(readPort() > 0); attempt += 1) await Bun.sleep(25)
-  port = readPort()
-  if (!(port > 0)) throw new Error('the server never reported a bound port')
+  const boundPort = readPort()
+  if (!(boundPort > 0)) throw new Error('the server never reported a bound port')
+  return { process: launched, port: boundPort }
+}
+
+beforeAll(async () => {
+  scratchRoot = mkdtempSync(join(tmpdir(), 'git-graph-host-guard-'))
+  repositoryPath = join(scratchRoot, 'victim')
+  createTaggedRepository(repositoryPath)
+  const launched = await launchServer({
+    root: scratchRoot,
+    scratch: scratchRoot,
+    environment: { GIT_GRAPH_ALLOWED_HOSTS: ALLOWED_HOST },
+  })
+  serverProcess = launched.process
+  port = launched.port
 })
 
 afterAll(async () => {
@@ -75,13 +97,16 @@ afterAll(async () => {
   rmSync(scratchRoot, { recursive: true, force: true })
 })
 
+type RawResponse = { status: number; headers: Record<string, string>; body: string }
+
 /**
- * Send raw request bytes; resolve with the status code and body once the whole
- * response has arrived. The server keeps the socket open whatever the request's
- * `Connection` says, so completeness is read off the response itself: the
- * declared `Content-Length`, or a chunked body's terminating chunk.
+ * Send raw request bytes; resolve with the status code, headers (lower-cased
+ * names), and body once the whole response has arrived. The server keeps the
+ * socket open whatever the request's `Connection` says, so completeness is read
+ * off the response itself: the declared `Content-Length`, or a chunked body's
+ * terminating chunk.
  */
-async function sendRaw(requestText: string): Promise<{ status: number; body: string }> {
+async function sendRawTo(targetPort: number, requestText: string): Promise<RawResponse> {
   let responseText = ''
   const decoder = new TextDecoder()
   const { promise: complete, resolve: onComplete } = Promise.withResolvers<void>()
@@ -96,7 +121,7 @@ async function sendRaw(requestText: string): Promise<{ status: number; body: str
   }
   const socket = await Bun.connect({
     hostname: '127.0.0.1',
-    port,
+    port: targetPort,
     socket: {
       data: (_socket, data) => {
         responseText += decoder.decode(data, { stream: true })
@@ -110,19 +135,44 @@ async function sendRaw(requestText: string): Promise<{ status: number; body: str
   await complete
   socket.end()
   const status = Number(/^HTTP\/1\.[01] (\d{3})/.exec(responseText)?.[1] ?? 0)
-  return { status, body: responseText.slice(responseText.indexOf('\r\n\r\n') + 4) }
+  const headerEnd = responseText.indexOf('\r\n\r\n')
+  const headers: Record<string, string> = {}
+  for (const line of responseText.slice(0, headerEnd).split('\r\n').slice(1)) {
+    const separator = line.indexOf(':')
+    headers[line.slice(0, separator).trim().toLowerCase()] = line.slice(separator + 1).trim()
+  }
+  return { status, headers, body: responseText.slice(headerEnd + 4) }
 }
+
+const sendRaw = (requestText: string) => sendRawTo(port, requestText)
 
 const headerLines = (headers: Record<string, string>) =>
   Object.entries(headers)
     .map(([name, value]) => `${name}: ${value}\r\n`)
     .join('')
 
-const get = (path: string, headers: Record<string, string>) =>
-  sendRaw(`GET ${path} HTTP/1.1\r\n${headerLines({ ...headers, Connection: 'close' })}\r\n`)
+const getFrom = (targetPort: number, path: string, headers: Record<string, string>) =>
+  sendRawTo(targetPort, `GET ${path} HTTP/1.1\r\n${headerLines({ ...headers, Connection: 'close' })}\r\n`)
 
-const postCheckout = (headers: Record<string, string>, body: string) =>
-  sendRaw(
+const get = (path: string, headers: Record<string, string>) => getFrom(port, path, headers)
+
+/** A CORS preflight for the checkout, as a browser sends it before the POST. */
+const preflightCheckoutTo = (targetPort: number, headers: Record<string, string>) =>
+  sendRawTo(
+    targetPort,
+    `OPTIONS /api/git/checkout HTTP/1.1\r\n` +
+      headerLines({
+        ...headers,
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'content-type,x-git-graph-action',
+        Connection: 'close',
+      }) +
+      '\r\n',
+  )
+
+const postCheckoutTo = (targetPort: number, headers: Record<string, string>, body: string) =>
+  sendRawTo(
+    targetPort,
     `POST /api/git/checkout HTTP/1.1\r\n` +
       headerLines({
         ...headers,
@@ -133,6 +183,8 @@ const postCheckout = (headers: Record<string, string>, body: string) =>
       }) +
       `\r\n${body}`,
   )
+
+const postCheckout = (headers: Record<string, string>, body: string) => postCheckoutTo(port, headers, body)
 
 const tagCheckout = '{"repo":"victim","target":{"kind":"tag","name":"v1"}}'
 
@@ -209,5 +261,243 @@ describe("the checkout's Origin check on the running server", () => {
     )
     expect(response.status).toBe(200)
     expect(headState()).toEqual({ hash: git('rev-parse', 'v1^{commit}'), branch: '' })
+  })
+})
+
+describe('a server with no embedding origins configured', () => {
+  // The default posture: another loopback page — the very origin an embedding
+  // host would have — gets no CORS grant and no checkout.
+  test('grants no CORS and refuses a same-site checkout from another loopback origin, HEAD untouched', async () => {
+    const hostOrigin = 'http://127.0.0.1:3115'
+    const read = await get('/api/git/repos', { Host: `127.0.0.1:${port}`, Origin: hostOrigin })
+    expect(read.headers['access-control-allow-origin']).toBeUndefined()
+    const preflight = await preflightCheckoutTo(port, { Host: `127.0.0.1:${port}`, Origin: hostOrigin })
+    expect(preflight.headers['access-control-allow-origin']).toBeUndefined()
+    expect(preflight.headers['access-control-allow-headers']).toBeUndefined()
+
+    const before = headState()
+    const response = await postCheckout(
+      { Host: `127.0.0.1:${port}`, Origin: hostOrigin, 'Sec-Fetch-Site': 'same-site' },
+      tagCheckout,
+    )
+    expect(response.status).toBe(403)
+    expect(headState()).toEqual(before)
+  })
+})
+
+// The embedding-host configuration end to end: the server launched the way a
+// supervising host (nightshift-ui) launches it — a repositories file naming
+// repositories by absolute path, one of them outside any common root, and the
+// host page's exact origins in GIT_GRAPH_ALLOWED_ORIGINS.
+describe('the embedding-host configuration on the running server', () => {
+  const HOST_ORIGIN = 'http://127.0.0.1:3115'
+  const OTHER_HOST_ORIGIN = 'http://localhost:5175'
+  let embedScratch: string
+  let embedProcess: ReturnType<typeof Bun.spawn>
+  let embedPort: number
+  let repositoriesFile: string
+  // `hosted` sits in the directory also passed as the root; `run` lives
+  // elsewhere entirely (a cache-directory checkout); `unlisted` sits beside
+  // `hosted` in that root but is not named by the file.
+  let hostedPath: string
+  let runPath: string
+  let unlistedPath: string
+
+  beforeAll(async () => {
+    embedScratch = mkdtempSync(join(tmpdir(), 'git-graph-embedding-'))
+    hostedPath = join(embedScratch, 'projects', 'hosted')
+    runPath = join(embedScratch, 'cache', 'runs', 'run-1')
+    unlistedPath = join(embedScratch, 'projects', 'unlisted')
+    for (const path of [hostedPath, runPath, unlistedPath]) createTaggedRepository(path)
+    repositoriesFile = join(embedScratch, 'repositories')
+    writeFileSync(repositoriesFile, `${hostedPath}\n${runPath}\n`)
+
+    const launched = await launchServer({
+      // The root the CLI would pass anyway; the repositories file replaces it.
+      root: join(embedScratch, 'projects'),
+      scratch: embedScratch,
+      environment: {
+        GIT_GRAPH_REPOSITORIES_FILE: repositoriesFile,
+        GIT_GRAPH_ALLOWED_ORIGINS: `${HOST_ORIGIN},${OTHER_HOST_ORIGIN}`,
+      },
+    })
+    embedProcess = launched.process
+    embedPort = launched.port
+  })
+
+  afterAll(async () => {
+    embedProcess?.kill()
+    await embedProcess?.exited
+    rmSync(embedScratch, { recursive: true, force: true })
+  })
+
+  const hostRequest = (origin = HOST_ORIGIN) => ({ Host: `127.0.0.1:${embedPort}`, Origin: origin })
+  const checkoutBody = (repository: string) => JSON.stringify({ repo: repository, target: { kind: 'tag', name: 'v1' } })
+
+  test('lists exactly the named repositories by absolute path, readable by the host origin', async () => {
+    const response = await getFrom(embedPort, '/api/git/repos', hostRequest())
+    expect(response.status).toBe(200)
+    expect(response.headers['access-control-allow-origin']).toBe(HOST_ORIGIN)
+    expect(response.headers.vary).toContain('Origin')
+    expect(JSON.parse(response.body)).toEqual({
+      rootPath: null,
+      repositories: [
+        { name: 'hosted', relativePath: hostedPath },
+        { name: 'run-1', relativePath: runPath },
+      ],
+    })
+  })
+
+  test('each configured origin reads a repository outside any common root; the grant names that origin only', async () => {
+    for (const origin of [HOST_ORIGIN, OTHER_HOST_ORIGIN]) {
+      const response = await getFrom(embedPort, `/api/git/log?repo=${encodeURIComponent(runPath)}`, hostRequest(origin))
+      expect(response.status).toBe(200)
+      expect(response.headers['access-control-allow-origin']).toBe(origin)
+      expect(JSON.parse(response.body).repository).toBe('run-1')
+    }
+  })
+
+  test('answers the host origin’s checkout preflight — and nobody else’s', async () => {
+    const granted = await preflightCheckoutTo(embedPort, hostRequest())
+    expect(granted.status).toBe(204)
+    expect(granted.headers['access-control-allow-origin']).toBe(HOST_ORIGIN)
+    expect(granted.headers['access-control-allow-methods']).toContain('POST')
+    expect(granted.headers['access-control-allow-headers']).toContain('x-git-graph-action')
+    expect(granted.headers['access-control-allow-credentials']).toBeUndefined()
+
+    for (const origin of ['http://127.0.0.1:3999', 'http://localhost:3115', 'https://evil.example']) {
+      const refused = await preflightCheckoutTo(embedPort, hostRequest(origin))
+      expect(refused.headers['access-control-allow-origin']).toBeUndefined()
+      expect(refused.headers['access-control-allow-headers']).toBeUndefined()
+    }
+  })
+
+  test('an unconfigured origin gets no CORS grant on a read, so its browser withholds the response', async () => {
+    for (const origin of ['http://127.0.0.1:3999', 'https://evil.example']) {
+      const response = await getFrom(embedPort, '/api/git/repos', hostRequest(origin))
+      expect(response.headers['access-control-allow-origin']).toBeUndefined()
+    }
+  })
+
+  test('refuses a repository outside the configured set — to the host origin too, readably', async () => {
+    for (const identifier of [unlistedPath, 'unlisted', 'hosted', '', `${hostedPath}/../unlisted`]) {
+      const response = await getFrom(embedPort, `/api/git/log?repo=${encodeURIComponent(identifier)}`, hostRequest())
+      expect(response.status).toBe(404)
+      expect(response.headers['access-control-allow-origin']).toBe(HOST_ORIGIN)
+    }
+    const before = headStateOf(unlistedPath)
+    const response = await postCheckoutTo(
+      embedPort,
+      { ...hostRequest(), 'Sec-Fetch-Site': 'same-site' },
+      checkoutBody(unlistedPath),
+    )
+    expect(response.status).toBe(404)
+    expect(headStateOf(unlistedPath)).toEqual(before)
+  })
+
+  test('refuses a checkout from an unconfigured origin, same-site or cross-site, with HEAD untouched', async () => {
+    const before = headStateOf(hostedPath)
+    for (const [origin, fetchSite] of [
+      ['http://127.0.0.1:3999', 'same-site'],
+      ['http://localhost:3115', 'same-site'],
+      ['https://evil.example', 'cross-site'],
+    ] as const) {
+      const response = await postCheckoutTo(
+        embedPort,
+        { ...hostRequest(origin), 'Sec-Fetch-Site': fetchSite },
+        checkoutBody(hostedPath),
+      )
+      expect(response.status).toBe(403)
+      expect(response.headers['access-control-allow-origin']).toBeUndefined()
+    }
+    expect(headStateOf(hostedPath)).toEqual(before)
+  })
+
+  test('refuses a foreign Host even alongside a configured Origin — the rebinding defence is untouched', async () => {
+    const before = headStateOf(hostedPath)
+    const foreign = { Host: `rebind.attacker.test:${embedPort}`, Origin: HOST_ORIGIN }
+    const read = await getFrom(embedPort, '/api/git/repos', foreign)
+    expect(read.status).toBe(421)
+    expect(read.headers['access-control-allow-origin']).toBeUndefined()
+    expect(read.body).not.toContain('hosted')
+    const write = await postCheckoutTo(embedPort, { ...foreign, 'Sec-Fetch-Site': 'same-site' }, checkoutBody(hostedPath))
+    expect(write.status).toBe(421)
+    expect(headStateOf(hostedPath)).toEqual(before)
+  })
+
+  test('follows the repositories file as the host rewrites it, without a restart', async () => {
+    const listed = async () =>
+      JSON.parse((await getFrom(embedPort, '/api/git/repos', hostRequest())).body).repositories.map(
+        (repository: { name: string }) => repository.name,
+      )
+    writeFileSync(repositoriesFile, `${hostedPath}\n${runPath}\n${unlistedPath}\n`)
+    expect(await listed()).toEqual(['hosted', 'run-1', 'unlisted'])
+    writeFileSync(repositoriesFile, `${hostedPath}\n${runPath}\n`)
+    expect(await listed()).toEqual(['hosted', 'run-1'])
+    const response = await getFrom(embedPort, `/api/git/log?repo=${encodeURIComponent(unlistedPath)}`, hostRequest())
+    expect(response.status).toBe(404)
+  })
+
+  test('reports what it serves and for whom in /api/status', async () => {
+    const response = await getFrom(embedPort, '/api/status', { Host: `localhost:${embedPort}` })
+    const status = JSON.parse(response.body)
+    expect(status.root).toBeNull()
+    expect(status.repositoriesFile).toBe(repositoriesFile)
+    expect(status.allowedOrigins).toEqual([HOST_ORIGIN, OTHER_HOST_ORIGIN])
+  })
+
+  // Last, because it moves HEAD: the host page's own checkout, as its browser
+  // sends it across origins.
+  test('checks out for the configured host origin, and the host can read the result', async () => {
+    const response = await postCheckoutTo(
+      embedPort,
+      { ...hostRequest(), 'Sec-Fetch-Site': 'same-site' },
+      checkoutBody(runPath),
+    )
+    expect(response.status).toBe(200)
+    expect(response.headers['access-control-allow-origin']).toBe(HOST_ORIGIN)
+    expect(JSON.parse(response.body).repository).toBe('run-1')
+    expect(headStateOf(runPath)).toEqual({ hash: gitIn(runPath, 'rev-parse', 'v1^{commit}'), branch: '' })
+  })
+})
+
+describe('embedding configuration that cannot be honoured fails the boot', () => {
+  const bootFailure = async (environment: Record<string, string>) => {
+    const scratch = mkdtempSync(join(tmpdir(), 'git-graph-bad-boot-'))
+    try {
+      const launched = Bun.spawn(['bun', join(import.meta.dir, 'index.ts'), scratch], {
+        // Never reaches the bind; the port only has to parse.
+        env: { ...gitEnvironment, NODE_ENV: 'test', HOST: '127.0.0.1', PORT: '40000', ...environment },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      })
+      const [exitCode, stderr] = await Promise.all([launched.exited, new Response(launched.stderr).text()])
+      return { exitCode, stderr }
+    } finally {
+      rmSync(scratch, { recursive: true, force: true })
+    }
+  }
+
+  test('an origin written other than a browser sends it', async () => {
+    const { exitCode, stderr } = await bootFailure({ GIT_GRAPH_ALLOWED_ORIGINS: 'http://127.0.0.1:3115/' })
+    expect(exitCode).not.toBe(0)
+    expect(stderr).toContain('GIT_GRAPH_ALLOWED_ORIGINS')
+  })
+
+  test('a repositories file that is missing or names a relative path', async () => {
+    const missing = await bootFailure({ GIT_GRAPH_REPOSITORIES_FILE: '/no/such/repositories-file' })
+    expect(missing.exitCode).not.toBe(0)
+    expect(missing.stderr).toContain('cannot be read')
+
+    const listDirectory = mkdtempSync(join(tmpdir(), 'git-graph-bad-list-'))
+    try {
+      const relativeList = join(listDirectory, 'repositories')
+      writeFileSync(relativeList, 'Developer/project\n')
+      const relative = await bootFailure({ GIT_GRAPH_REPOSITORIES_FILE: relativeList })
+      expect(relative.exitCode).not.toBe(0)
+      expect(relative.stderr).toContain('not an absolute path')
+    } finally {
+      rmSync(listDirectory, { recursive: true, force: true })
+    }
   })
 })
