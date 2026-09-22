@@ -28,12 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`ConfirmActionDialog`) are fetch-free barrel components. Their wording
   (`buildGitMenuSections`, `describeCheckout`) lives in `git-graph/shared`.
   `CommitGraph` gains an `onContextMenu` seam, and `GitCommit` gains `fullHash`
-  (git `%H`). ([#2])
+  (git `%H`). ([#2], [#12])
 
 ### Security
 
-- **The server now answers only for the host names it is reachable under,
-  closing DNS rebinding.** A page a user visited could point its own domain at
+- **BREAKING** — **The server now answers only for the host names it is
+  reachable under, closing DNS rebinding.** A page a user visited could point its own domain at
   `127.0.0.1`, making the service same-origin with it in the browser, and then
   read every repository under the served root and run `POST /api/git/checkout`
   (whose cross-origin gate a rebound request passes). Every request, on every
@@ -48,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   honours a forwarded one only when the server itself serves that name. The
   checkout's cross-origin gate also refuses an `Origin` naming a host outside
   the same allowlist, which it previously admitted when no `Sec-Fetch-Site` was
-  sent. ([#5])
+  sent. ([#5], [#12])
 
 ### Changed
 
@@ -167,3 +167,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [#9]: https://github.com/binaryplease/git-graph/pull/9
 [#10]: https://github.com/binaryplease/git-graph/issues/10
 [#11]: https://github.com/binaryplease/git-graph/pull/11
+[#12]: https://github.com/binaryplease/git-graph/pull/12
