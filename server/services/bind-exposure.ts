@@ -14,10 +14,11 @@
 // acknowledgement that an authenticating reverse proxy sits in front — the
 // documented hosted deployment. Loopback (the default) always serves.
 //
-// The loopback check lives here rather than in a shared trusted-host module:
-// git-graph has no DNS-rebinding Host guard of its own, and this decision needs
-// only `node:*`-free string logic, so per ADR-0032 it stays a self-contained,
-// dependency-light unit.
+// This gate decides the bind address once; the per-request half — refusing a
+// `Host` the server does not answer for, which is what stops DNS rebinding — is
+// services/trusted-host.ts. That module asks the same loopback question of the
+// Host header, so it imports `isLoopbackAddress` from here rather than keeping a
+// second copy (ADR-0032: both stay `node:*`-free, dependency-light units).
 
 // Loopback literals a bind address is written as. The whole 127.0.0.0/8 block is
 // loopback, not just 127.0.0.1; `::1`/`[::1]` cover IPv6.

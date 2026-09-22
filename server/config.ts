@@ -36,11 +36,12 @@ const EnvironmentSchema = z.object({
     .string()
     .default('')
     .describe('Path the server writes its bound port to once listening (for the CLI handshake).'),
-  // Extra Host header values the operator acknowledges when binding a
-  // non-loopback address (ADR-0037 §4). Empty by default: git-graph is
-  // loopback-only, and a non-loopback bind with no named hosts refuses to start.
-  // Only the documented HOST=0.0.0.0-behind-an-authenticating-proxy deployment
-  // needs this, and that operator must name their own domain.
+  // Extra Host header values the server answers for, beside the loopback names.
+  // Two jobs: the acknowledgement a non-loopback bind needs to start (ADR-0037
+  // §4), and the per-request allowlist of the DNS-rebinding guard
+  // (services/trusted-host.ts, issue #5). Empty by default: git-graph answers
+  // for loopback names only. A proxied deployment names its own domain here —
+  // including a loopback bind behind a proxy that passes its public Host through.
   GIT_GRAPH_ALLOWED_HOSTS: z
     .string()
     .default('')

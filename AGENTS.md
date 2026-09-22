@@ -177,15 +177,39 @@ consumers (standalone instance · shared package · nightshift-ui module):
     switch (uncommitted changes it would overwrite) is a 409 whose message is
     git's stderr verbatim. In front of it, `services/mutation-guard.ts` (its own
     module, ADR-0032) is the cross-origin gate: the custom header, a JSON content
-    type, and `Sec-Fetch-Site` (when sent) of `same-origin` — so a foreign page in
-    the user's browser cannot fire a checkout at the loopback service (no CORS
-    plugin is installed, so the preflight such a request needs is never granted).
-    DNS rebinding is out of its reach and stays issue #5; the loopback default
-    (ADR-0037 §4) is what makes an unauthenticated write route tolerable, and must
-    not be relaxed for it. Later write actions (#2) join this route family with
-    the same two guards. The posture is recorded corpus-wide as ADR-0044
+    type, `Sec-Fetch-Site` (when sent) of `same-origin`, and `Origin` (when sent)
+    naming a host the server answers for — so a foreign page in the user's
+    browser cannot fire a checkout at the loopback service (no CORS plugin is
+    installed, so the preflight such a request needs is never granted). DNS
+    rebinding — where the browser itself calls the attacker's page same-origin —
+    is closed one layer earlier by the Host guard below; the loopback default
+    (ADR-0037 §4) is still what makes an unauthenticated write route tolerable,
+    and must not be relaxed for it. Later write actions (#2) join this route
+    family with the same guards. The posture is recorded corpus-wide as ADR-0044
     (proposed): membership-resolved targets, the cross-origin gate, loopback
     only.
+  - **The Host guard** (issue #5) answers only for the names the server is
+    reachable under, on every route, whatever the bind address: `localhost`, the
+    127.0.0.0/8 block, `[::1]` (port or not), and whatever
+    `GIT_GRAPH_ALLOWED_HOSTS` names — so that variable carries two jobs, the
+    ADR-0037 §4 exposure acknowledgement and the per-request allowlist, and a
+    loopback-bound service behind a proxy that passes its public `Host` through
+    must list that name too. This is the DNS-rebinding defence: a rebound page is
+    same-origin as far as the browser can tell, and only the attacker's name in
+    `Host` tells it apart. The decision is pure in `services/trusted-host.ts`
+    (strict authority parsing — a malformed Host is refused, never trimmed into a
+    loopback one; matching is exact, so `evil.localhost` is foreign); the refusal
+    is `routes/trusted-host.ts`, an `onRequest` plugin mounted first in
+    `index.ts` — a foreign name gets 421, a missing or malformed Host 400 (every
+    browser sends one; an absent Host cannot be told apart from a rebound one).
+    `index.ts` builds the app with `nativeStaticResponse: false`, and that is
+    load-bearing: Elysia otherwise hands a fixed-`Response` route (the Scalar page
+    at `/api/docs`) to Bun as a native static route that runs no hook, which
+    would answer a rebound Host. `services/public-origin.ts` builds the discovery
+    document's origin from the validated Host, honouring `x-forwarded-host` only
+    for a name the guard would itself serve and `x-forwarded-proto` only as
+    `http`/`https`. The mutation guard's `Origin` check reuses the same allowlist
+    (`isTrustedOrigin`).
   - Standalone surface (the on-demand instance consumer, mirroring
     binp-file-explorer's `bfe`): `server/cli.ts` + `server/cli/` is the `bgg`
     executable the flake installs — `serve` (foreground, browser-open) and a
@@ -314,7 +338,20 @@ refusal over uncommitted changes coming back with its stderr, the changes intact
 `services/mutation-guard.test.ts` pins each cross-origin check on its own plus
 its composition on an Elysia route (refused before the handler, no CORS preflight
 granted — `Sec-Fetch-Site` is pinned on the pure verdict because the test DOM's
-Request drops `Sec-*` headers). `shared/gitActions.test.ts` pins the descriptor:
+Request drops `Sec-*` headers), including a foreign or opaque `Origin` refused
+with no `Sec-Fetch-Site` to go on. The Host guard is pinned twice:
+`services/trusted-host.test.ts` for the pure parsing and allowlist (port
+stripping, bracketed IPv6 kept whole, malformed authorities refused, exact
+matching, allowlist entries however written, the 400/421 split) with
+`services/public-origin.test.ts` beside it, and `server/index.test.ts` end to end
+— the real `server/index.ts` launched as its own process against a scratch
+repository and driven over a raw TCP socket (the test DOM's `fetch` drops
+`Host`/`Origin`, and a raw socket can send no Host at all): loopback and allowed
+names served, a foreign Host refused with 421 on discovery, docs, spec, and git
+reads, a missing Host refused with 400, the audit's rebound checkout refused with
+HEAD untouched, a foreign `Origin` refused with HEAD untouched, the discovery
+document ignoring a foreign `X-Forwarded-Host`, and the page's own checkout still
+succeeding. `shared/gitActions.test.ts` pins the descriptor:
 no entry ever missing, the reasons (already checked out, default branch, remote
 only, HEAD already detached here, no full hash), the row/pill section order,
 and the checkout statement's warnings. DOM tests cover `GitActionMenu`
@@ -365,7 +402,7 @@ covered too: `services/port.test.ts` (probe/walk against real binds),
 `bind-exposure.test.ts` (loopback-default / non-loopback-refusal, ADR-0037 §4),
 `cli/args.test.ts` (argv routing + flag parsing), and `scripts/dev-ports.test.ts`
 (env pinning + reassignment announcements).
-Currently 287 tests across 22 files.
+Currently 313 tests across 25 files.
 
 ## UX conventions
 
@@ -418,7 +455,8 @@ Currently 287 tests across 22 files.
 - ADR-0018 / ADR-0037: dynamic port allocation runs in front of the strict bind
   (`auto` default, announced walk), never as a silent fallback; a conflict on a
   pinned port is still fatal. Loopback bind by default; non-loopback refuses
-  without `GIT_GRAPH_ALLOWED_HOSTS`.
+  without `GIT_GRAPH_ALLOWED_HOSTS`. Whatever the bind, a request is answered
+  only for a loopback `Host` or one that variable names (issue #5).
 - ADR-0011 / ADR-0015: the `bgg` CLI resolves its sibling server bundle by real
   path, and its background daemon lives under the `daemon` subcommand.
 - Theme: light/dark/system toggle in every shell's header (default `system`),

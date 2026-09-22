@@ -30,6 +30,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CommitGraph` gains an `onContextMenu` seam, and `GitCommit` gains `fullHash`
   (git `%H`). ([#2])
 
+### Security
+
+- **The server now answers only for the host names it is reachable under,
+  closing DNS rebinding.** A page a user visited could point its own domain at
+  `127.0.0.1`, making the service same-origin with it in the browser, and then
+  read every repository under the served root and run `POST /api/git/checkout`
+  (whose cross-origin gate a rebound request passes). Every request, on every
+  route and whatever the bind address, must now carry a `Host` of `localhost`,
+  the `127.0.0.0/8` block, or `[::1]` (with or without a port), or a name listed
+  in `GIT_GRAPH_ALLOWED_HOSTS`. Any other name gets `421`, and a request with
+  no `Host` or a malformed one gets `400`. **Operators:** a reverse proxy that
+  passes its public host through in `Host` (Caddy's default) must now list that
+  name in `GIT_GRAPH_ALLOWED_HOSTS` (NixOS: `allowedHosts`) even when the
+  service binds loopback. The `/api` discovery document no longer reflects an
+  unvalidated `Host` or `X-Forwarded-Host`. It names the validated host, and
+  honours a forwarded one only when the server itself serves that name. The
+  checkout's cross-origin gate also refuses an `Origin` naming a host outside
+  the same allowlist, which it previously admitted when no `Sec-Fetch-Site` was
+  sent. ([#5])
+
 ### Changed
 
 - The expanded commit detail now reads **metadata → commit message → changed files** in
@@ -142,6 +162,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [#1]: https://github.com/binaryplease/git-graph/issues/1
 [#2]: https://github.com/binaryplease/git-graph/issues/2
+[#5]: https://github.com/binaryplease/git-graph/issues/5
 [#6]: https://github.com/binaryplease/git-graph/pull/6
 [#9]: https://github.com/binaryplease/git-graph/pull/9
 [#10]: https://github.com/binaryplease/git-graph/issues/10

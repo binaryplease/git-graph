@@ -115,6 +115,16 @@ name the served host(s) in `GIT_GRAPH_ALLOWED_HOSTS`. Setting that variable is
 an acknowledgement that an authenticating reverse proxy fronts the service and
 the port is not directly reachable. There is no silent way to publish it.
 
+Whatever the bind address, the server also answers only for the host names it is
+reachable under: `localhost`, `127.0.0.1` (the whole `127.0.0.0/8` block),
+`[::1]`, and the names in `GIT_GRAPH_ALLOWED_HOSTS`. A request whose `Host`
+header names anything else gets `421`, and one with no `Host` header at all
+gets `400`. This is what stops DNS rebinding, where a page you visit points its
+own domain at `127.0.0.1` so that your browser treats the service as that page's
+own server. A reverse proxy that passes its public host name through in `Host`
+(Caddy does by default) therefore needs that name in `GIT_GRAPH_ALLOWED_HOSTS`
+even when git-graph itself binds loopback.
+
 Only repositories the server itself discovered are ever passed to git. Every
 untrusted input is re-validated by membership against git's own listings —
 repository ids against the repo listing, file paths against a commit's own file
@@ -127,8 +137,9 @@ page itself. Loopback keeps other machines out, but not other web pages open in
 your browser, which can send requests to `127.0.0.1` too. So a checkout must
 carry a custom header and a JSON body, which a foreign page cannot send without a
 CORS preflight the server never answers. A browser request marked
-`Sec-Fetch-Site: cross-site` is refused outright. DNS rebinding is not covered by
-this yet: that needs the Host-header guard tracked in #5.
+`Sec-Fetch-Site: cross-site`, or whose `Origin` names a host the server does not
+answer for, is refused outright. A DNS-rebound page never gets this far: the
+Host check above refuses it first.
 
 See [`SECURITY.md`](SECURITY.md) for the full threat model and how to report a
 vulnerability.
@@ -138,7 +149,8 @@ vulnerability.
 The flake exposes a hardened **NixOS module** (`nixosModules.default`,
 `services.git-graph`) that runs the server as a loopback-bound systemd
 service. Front it with an authenticating reverse proxy and set `allowedHosts`
-before exposing it — see the security model above.
+to the name it serves before exposing it — the service answers for no other
+name, loopback aside. See the security model above.
 
 ## Embedding the graph
 

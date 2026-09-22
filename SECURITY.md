@@ -41,21 +41,25 @@ What **is** in scope:
   `GIT_GRAPH_ALLOWED_HOSTS` acknowledgement**, or to defeat that gate.
 - **Cross-site / browser-side attacks** that let a page you visit reach the
   local service and exfiltrate repository contents (e.g. DNS rebinding, a
-  missing origin check). DNS rebinding specifically is a known open gap until
-  the Host-header guard (issue #5) lands.
+  missing origin check). Every request is answered only for a loopback `Host`
+  or a name in `GIT_GRAPH_ALLOWED_HOSTS` (the DNS-rebinding guard, issue #5), so
+  a way to get an answer for any other name is in scope.
 - **Any write other than a confirmed checkout.** `POST /api/git/checkout` is the
   only route that changes a repository. Any other way to mutate a repository is a
   bug with security weight. So is any way to make the checkout act on a ref or
   commit git's own listings do not name, or to trigger it from a foreign web
   page. The checkout requires the `X-Git-Graph-Action: 1` header and a JSON
-  body, and refuses a request the browser marks cross-site. A way around that
-  gate is in scope.
+  body, and refuses a request the browser marks cross-site or whose `Origin`
+  names a host the server does not answer for. A way around that gate is in
+  scope.
 
 ## Deploying it beyond loopback
 
 Binding a non-loopback address is a fatal startup error unless you set
-`GIT_GRAPH_ALLOWED_HOSTS`. That variable is an acknowledgement, not a
-protection: if you set it, you are asserting that an authenticating reverse
+`GIT_GRAPH_ALLOWED_HOSTS`. That variable also lists the only non-loopback names
+the server answers for, so a proxy that passes its public host through in
+`Host` must be named there even when git-graph binds loopback. It is an
+acknowledgement, not a protection: if you set it, you are asserting that an authenticating reverse
 proxy fronts the service and the port is not directly reachable. Exposing the
 service without one publishes the full contents of every repository under the
 served root to anyone who can reach it, and lets them check out refs in those

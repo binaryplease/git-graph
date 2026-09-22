@@ -20,42 +20,67 @@ const clientHeaders = () =>
 
 describe('checkMutationRequest', () => {
   test('admits the request the git-graph client sends', () => {
-    expect(checkMutationRequest(clientHeaders())).toEqual({ ok: true })
+    expect(checkMutationRequest(clientHeaders(), [])).toEqual({ ok: true })
   })
 
   test('admits a same-origin browser request, and a non-browser one that sends no Sec-Fetch-Site', () => {
     const sameOrigin = clientHeaders()
     sameOrigin.set('sec-fetch-site', 'same-origin')
-    expect(checkMutationRequest(sameOrigin).ok).toBe(true)
-    expect(checkMutationRequest(clientHeaders()).ok).toBe(true)
+    expect(checkMutationRequest(sameOrigin, []).ok).toBe(true)
+    expect(checkMutationRequest(clientHeaders(), []).ok).toBe(true)
   })
 
   test('refuses a request the browser marks as cross-site or same-site, even with the header', () => {
     for (const fetchSite of ['cross-site', 'same-site', 'none']) {
       const headers = clientHeaders()
       headers.set('sec-fetch-site', fetchSite)
-      const verdict = checkMutationRequest(headers)
+      const verdict = checkMutationRequest(headers, [])
       expect(verdict.ok).toBe(false)
     }
+  })
+
+  test('admits an Origin naming a loopback host or an allowed host, on any port', () => {
+    for (const origin of ['http://localhost:5183', 'http://127.0.0.1:3010', 'http://[::1]:3010']) {
+      const headers = clientHeaders()
+      headers.set('origin', origin)
+      expect(checkMutationRequest(headers, []).ok).toBe(true)
+    }
+    const proxied = clientHeaders()
+    proxied.set('origin', 'https://graph.example.com')
+    expect(checkMutationRequest(proxied, ['graph.example.com']).ok).toBe(true)
+  })
+
+  // NST11963 finding 3: with no Sec-Fetch-Site to go on, a foreign Origin was
+  // admitted. The Origin is refused on its own now, whatever else is present.
+  test('refuses a foreign Origin even when no Sec-Fetch-Site is sent', () => {
+    for (const origin of ['http://evil.example', 'http://evil.localhost:3010', 'null', 'file://', 'not a url']) {
+      const headers = clientHeaders()
+      headers.set('origin', origin)
+      const verdict = checkMutationRequest(headers, ['graph.example.com'])
+      expect(verdict.ok).toBe(false)
+    }
+    const proxiedElsewhere = clientHeaders()
+    proxiedElsewhere.set('origin', 'https://graph.example.com')
+    expect(checkMutationRequest(proxiedElsewhere, []).ok).toBe(false)
   })
 
   test('refuses a request without the custom header — what a plain form post looks like', () => {
     const headers = clientHeaders()
     headers.delete(MUTATION_REQUEST_HEADER)
-    expect(checkMutationRequest(headers).ok).toBe(false)
+    expect(checkMutationRequest(headers, []).ok).toBe(false)
     headers.set(MUTATION_REQUEST_HEADER, 'yes')
-    expect(checkMutationRequest(headers).ok).toBe(false)
+    expect(checkMutationRequest(headers, []).ok).toBe(false)
   })
 
   test('refuses a body that is not JSON — the content types a page may send without a preflight', () => {
     for (const contentType of ['text/plain', 'application/x-www-form-urlencoded', 'multipart/form-data', '']) {
       const headers = clientHeaders()
       headers.set('content-type', contentType)
-      expect(checkMutationRequest(headers).ok).toBe(false)
+      expect(checkMutationRequest(headers, []).ok).toBe(false)
     }
     const withCharset = clientHeaders()
     withCharset.set('content-type', 'application/json; charset=utf-8')
-    expect(checkMutationRequest(withCharset).ok).toBe(true)
+    expect(checkMutationRequest(withCharset, []).ok).toBe(true)
   })
 })
 
@@ -73,7 +98,7 @@ describe('the guard on an Elysia route', () => {
     {
       body: z.object({ repo: z.string() }),
       beforeHandle({ request, status }) {
-        const verdict = checkMutationRequest(request.headers)
+        const verdict = checkMutationRequest(request.headers, [])
         if (!verdict.ok) return status(403, { error: verdict.reason })
       },
     },

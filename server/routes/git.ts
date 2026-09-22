@@ -1,5 +1,5 @@
 import { Elysia } from 'elysia'
-import { config } from '../config'
+import { additionalAllowedHosts, config } from '../config'
 import { checkMutationRequest } from '../services/mutation-guard'
 import {
   createGitService,
@@ -464,7 +464,7 @@ export const gitRoutes = new Elysia()
     {
       body: CheckoutRequestSchema,
       beforeHandle({ request, status }) {
-        const verdict = checkMutationRequest(request.headers)
+        const verdict = checkMutationRequest(request.headers, additionalAllowedHosts)
         if (!verdict.ok) return status(403, { error: verdict.reason })
       },
       response: {
@@ -485,7 +485,8 @@ export const gitRoutes = new Elysia()
           "repository's refs — and an unknown one is rejected with 404 before git runs. git's own safety " +
           'applies: a switch that would overwrite uncommitted changes is refused with 409 carrying git’s ' +
           'stderr. The request must carry the `X-Git-Graph-Action: 1` header and a JSON body, and a browser ' +
-          'request marked cross-site is refused with 403, so a foreign web page cannot trigger it.',
+          'request marked cross-site, or whose `Origin` names a host the server does not answer for, is ' +
+          'refused with 403, so a foreign web page cannot trigger it.',
       },
     },
   )
