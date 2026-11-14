@@ -134,7 +134,10 @@ consumers (standalone instance · shared package · nightshift-ui module):
     down to the next row; then every other row's first-parent run down to the
     first owned commit, the longest remaining run first), `buildBranchTree`
     (runs, forks, the walk order — down the default line, every commit after all
-    its children, a commit's same-run child first — the merge that took each tip,
+    its children, a commit's same-run child first — the merge that took each tip
+    (never recorded for a row on the default first-parent line, so a feature
+    merging main's tip neither draws that merge nor breaks `main` over
+    `upstream/main`),
     chains where a row's fork is another row's tip, and lanes placed per chain
     over its whole span, so they never depend on which rows are open),
     `attributeMergedCommits` (the commits on no line, each counted once on the
@@ -502,11 +505,12 @@ chain off the default line, a tag-only tip, a merged branch,
 `spike/pdf-renderer` with `spike/pdf-fonts` forked from it, a deleted branch
 merged in) and pins: the row order is topological; no commit lies on two lines;
 lines plus merged-in side commits cover every commit once; every row gets a lane;
-lane 0 is the default line; `spike/pdf-fonts` forks from `spike/pdf-renderer`,
+lane 0 is the default line, and stays whole when a feature merges main's tip;
+`spike/pdf-fonts` forks from `spike/pdf-renderer`,
 not from main; a ref whose fork is another ref's tip continues its lane; a
 merged ref has its merge recorded; a deleted branch is counted on its merge, and
 a side commit merged twice once, on the earlier merge; lanes are a function of
-the log alone; the Tags-as-rows rule; no `origin/` guess for the default tip.
+the log alone (the fixture's lanes pinned); the Tags-as-rows rule; no `origin/` guess for the default tip.
 `src/components/BranchGraph.test.tsx` pins the view: one row per ref and no
 commit rows while closed; a click lists the line beneath its row and toggles
 `aria-expanded`; ref-node x positions unchanged by opening rows; "show N more"
@@ -514,12 +518,12 @@ after 25 (and a selection past it opens the line far enough); "+N merged" with
 its title; "from …" naming the line left and absent on the default line and on
 continuations; selection, the inline detail slot, a selected side commit beneath
 its merge, closing a line clearing its selection; search dimming, auto-open,
-`<mark>`, "N of M commits", and the stats; the keyboard contract, including
+a matching side commit shown beneath its merge, `<mark>`, "N of M commits", and the stats; the keyboard contract, including
 that handled keys never reach a window listener. `src/lib/graphView.test.tsx`
 pins the switch: Commits by default, the choice and the tags toggle surviving a
 remount through `localStorage`, a stored value that fails validation falling
 back, and Tags as rows disabled with its reason in the Commits view.
-Currently 393 tests across 30 files.
+Currently 395 tests across 30 files.
 
 ## UX conventions
 
@@ -608,7 +612,8 @@ Currently 393 tests across 30 files.
   commits show them as ring dots. Commits on no line arrive as "+N merged" on
   their merge, with a title saying the Commits view draws them. Search
   (subject/hash/author, as in Commits) dims rows without a match and opens every
-  line holding one in full; clicking such a row still closes it. Keyboard:
+  line holding one in full; a matching commit on no line shows beneath the merge
+  that brought it in, and a ref name alone is not a match; clicking such a row still closes it. Keyboard:
   Up/Down move, Right opens, Left closes or goes from a commit to its ref row,
   Enter/Space activate, Escape clears the selection. **Tags as rows** (off by
   default) gives every tagged commit a row; off, a tag-only commit gets one only

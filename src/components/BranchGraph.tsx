@@ -18,6 +18,7 @@ import {
   FuzzySegments,
   NODE_RADIUS,
   ROW_HEIGHT,
+  SEARCH_DIMMED_CLASS,
   graphColumnWidth,
   graphContentLeft,
   laneColor,
@@ -164,14 +165,16 @@ export function BranchGraph({
     }
     return matched
   }, [commits, searchQuery])
+  // A matching side commit counts for the line of the merge that brought it in,
+  // where it is then shown (ADR-0019: a match is never counted but hidden).
   const linesWithMatches = useMemo(() => {
     const lines = new Set<string>()
     for (const hash of matchedHashes) {
-      const line = model.runOf.get(hash)
+      const line = lineOfCommit(hash)
       if (line !== undefined) lines.add(line)
     }
     return lines
-  }, [matchedHashes, model])
+  }, [matchedHashes, lineOfCommit])
 
   // Open state. A line opens when its row is opened, or when it holds a match
   // (unless its row was closed during this search).
@@ -228,22 +231,26 @@ export function BranchGraph({
         moreAfter.set(shown[shown.length - 1]!, { line: rowHash, hidden: run.length - shown.length })
       }
     }
-    const selectedMerge = selectedHash === null ? undefined : mergeOfSideCommit.get(selectedHash)
+    // Side commits get a row beneath their merge when selected or matched.
+    const shownSideCommits = (mergeHash: string) =>
+      (model.mergedBy.get(mergeHash) ?? [])
+        .filter((hash) => hash === selectedHash || matchedHashes.has(hash))
+        .sort((first, second) => model.position.get(first)! - model.position.get(second)!)
     const list: Item[] = []
     for (const hash of model.order) {
       if (model.lane.has(hash)) list.push({ kind: 'ref', key: `ref:${hash}`, hash, line: hash })
       if (shownCommits.has(hash)) {
         const line = model.runOf.get(hash)!
         list.push({ kind: 'commit', key: hash, hash, line })
-        if (selectedMerge === hash && selectedHash !== null) {
-          list.push({ kind: 'side', key: `side:${selectedHash}`, hash: selectedHash, line, mergeHash: hash })
+        for (const sideHash of shownSideCommits(hash)) {
+          list.push({ kind: 'side', key: `side:${sideHash}`, hash: sideHash, line, mergeHash: hash })
         }
       }
       const more = moreAfter.get(hash)
       if (more !== undefined) list.push({ kind: 'more', key: `more:${more.line}`, ...more })
     }
     return { list, shownCommits }
-  }, [model, isOpen, fullyShownRows, linesWithMatches, selectedHash, mergeOfSideCommit])
+  }, [model, isOpen, fullyShownRows, linesWithMatches, selectedHash, matchedHashes])
 
   const matchCount = searchQuery ? matchedHashes.size : null
   useEffect(() => {
@@ -283,7 +290,7 @@ export function BranchGraph({
     rowElement(items.list[selectedIndex]!.key)?.scrollIntoView?.({ block: 'nearest' })
   }, [selectedIndex, selectedHash, items])
   const firstMatchKey = searchQuery
-    ? items.list.find((item) => item.kind === 'commit' && matchedHashes.has(item.hash))?.key
+    ? items.list.find((item) => (item.kind === 'commit' || item.kind === 'side') && matchedHashes.has(item.hash))?.key
     : undefined
   useEffect(() => {
     if (firstMatchKey === undefined) return
@@ -319,15 +326,15 @@ export function BranchGraph({
     const forkHash = model.fork.get(rowHash) ?? null
     const forkY = yOf(forkHash)
     const forkLane = forkHash !== null ? laneOfRow(model.runOf.get(forkHash)!) : lane
-    let d: string
+    let pathData: string
     if (forkLane === lane) {
-      d = `M${x},${nodeY} L${x},${forkY}`
+      pathData = `M${x},${nodeY} L${x},${forkY}`
     } else {
       const bend = Math.min(BEND_HEIGHT, (forkY - nodeY) / 2)
       const forkX = laneX(forkLane)
-      d = `M${x},${nodeY} L${x},${forkY - bend} C${x},${forkY - bend / 2} ${forkX},${forkY - bend / 2} ${forkX},${forkY}`
+      pathData = `M${x},${nodeY} L${x},${forkY - bend} C${x},${forkY - bend / 2} ${forkX},${forkY - bend / 2} ${forkX},${forkY}`
     }
-    linePaths.push({ key: `line:${rowHash}`, d, color: laneColor(lane) })
+    linePaths.push({ key: `line:${rowHash}`, d: pathData, color: laneColor(lane) })
     const mergeHash = model.merge.get(rowHash) ?? null
     if (mergeHash !== null) {
       const mergeY = yOf(mergeHash)
@@ -374,7 +381,6 @@ export function BranchGraph({
   // so the shared hover and selected tokens still win over it.
   const rowBaseClass =
     'flex w-full cursor-pointer items-center gap-2 bg-(--line-tint) pr-4 text-left whitespace-nowrap'
-  const dimClass = 'opacity-25 hover:opacity-60'
   const tint = (lane: number, percent: number) =>
     ({ '--line-tint': `color-mix(in srgb, ${laneColor(lane)} ${percent}%, transparent)` }) as CSSProperties
 
@@ -452,7 +458,7 @@ export function BranchGraph({
                 data-row-kind="ref"
                 aria-expanded={open}
                 title={`${open ? 'Hide' : 'Show'} the ${commitsText} on this line`}
-                className={`${rowBaseClass} hover:bg-rowhover ${searchQuery && hits === 0 ? dimClass : ''}`}
+                className={`${rowBaseClass} hover:bg-rowhover ${searchQuery && !linesWithMatches.has(item.hash) ? SEARCH_DIMMED_CLASS : ''}`}
                 style={{ ...rowStyle, ...(open ? tint(lane, 13) : NO_TINT) }}
                 onClick={() => toggleRow(item.hash)}
               >
@@ -514,7 +520,7 @@ export function BranchGraph({
                 data-row-kind={item.kind}
                 aria-current={isSelected ? 'true' : undefined}
                 className={`${rowBaseClass} hover:bg-rowhover ${
-                  searchQuery && !matched ? dimClass : ''
+                  searchQuery && !matched ? SEARCH_DIMMED_CLASS : ''
                 }`}
                 style={{ ...rowStyle, ...(isSelected ? SELECTED_TINT : tint(lane, 7)) }}
                 onClick={() => onSelectCommit?.(commit)}

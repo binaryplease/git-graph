@@ -223,6 +223,23 @@ describe('BranchGraph — search', () => {
     expect(onStats).toHaveBeenLastCalledWith({ laneCount: 4, refCount: 8, matchCount: 1 })
   })
 
+  test('a matching side commit is shown beneath its merge, never counted but hidden', () => {
+    const onStats = mock(() => {})
+    const { container } = renderGraph({ searchQuery: 'deleted', onStats })
+    // d1 ("deleted branch work") lies on no line; m4 ("Merge a deleted branch"),
+    // on upstream/main's line, merged it. Both match.
+    expect(onStats).toHaveBeenLastCalledWith({ laneCount: 4, refCount: 8, matchCount: 2 })
+    expect(refRow(container, 'm3').getAttribute('aria-expanded')).toBe('true')
+    expect(refRow(container, 'm3').className).not.toContain('opacity-25')
+    const keys = rowKeys(container)
+    expect(keys[keys.indexOf('m4') + 1]).toBe('side:d1')
+    const sideRow = container.querySelector('[data-row-key="side:d1"]')!
+    expect(sideRow.className).not.toContain('opacity-25')
+    expect(sideRow.querySelector('mark')).not.toBeNull()
+    // The unmatched side commit d2 stays out.
+    expect(keys).not.toContain('side:d2')
+  })
+
   test('a line opened by a match closes on click', () => {
     const { container } = renderGraph({ searchQuery: 'renderer' })
     fireEvent.click(refRow(container, 'r1'))

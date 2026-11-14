@@ -17,14 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lane 0; the other refs claim their commits longest run first, and each line
   joins the line it left at its fork. A ref whose fork is another ref's tip
   continues that ref's lane (`main` over `upstream/main`), and a merged ref gets a
-  second line from its merge. Clicking a ref row lists the line's commits beneath
+  second line from its merge (a ref on the default line never does, so a feature
+  merging main's tip leaves main's line whole). Clicking a ref row lists the line's commits beneath
   it, at most 25 and then a "show N more commits" row; opening a row never moves
   a lane. A ref row reads chevron, ref pills, "N commits", "from <line it
   leaves>", and the tip's author and age. A merge that brought in commits lying
   on no line (a deleted branch's) shows "+N merged". Selecting a commit opens the
   same commit detail as the Commits view, inline or in the sidebar. The fuzzy
-  search dims rows without a match, opens every line holding one in full, and
-  marks the matched characters. Keyboard: Up/Down move between rows, Right opens
+  search dims rows without a match, opens every line holding one in full, shows
+  a matching commit that lies on no line beneath its merge, and marks the
+  matched characters. Keyboard: Up/Down move between rows, Right opens
   a ref row, Left closes it or moves from a commit to its ref row, Enter/Space
   activate, Escape clears the selection. A **Tags as rows** toggle (off by
   default; disabled with its reason in the Commits view) gives every tagged

@@ -223,11 +223,31 @@ describe('computeBranchTree — the tree of lines', () => {
     expectInvariants(tree, commits)
   })
 
-  test('lanes are a function of the log alone, so opening rows cannot move them', () => {
-    // The model takes no open-row input at all; computing it again yields the
-    // same lanes, and the view only reads them.
-    expect(model().lane).toEqual(model().lane)
+  test('the lanes of the fixture, pinned', () => {
+    // The model takes no open-row input, so these are the lanes whatever is open;
+    // BranchGraph.test.tsx checks that opening rows leaves the ref nodes in place.
+    expect(Object.fromEntries(model().lane)).toEqual({ m1: 0, m3: 0, x1: 1, x2: 1, t1: 1, g1: 2, r1: 1, f1: 3 })
     expect(model().laneCount).toBe(4)
+  })
+
+  test("a feature merging the default branch's tip leaves the default line whole", () => {
+    // main (m2) on upstream/main (m1) on m0; feature f2 merges m2 into f1.
+    const commits = [
+      commit('f2', ['f1', 'm2'], ['feature']),
+      commit('m2', ['m1'], ['main']),
+      commit('m1', ['m0'], ['upstream/main']),
+      commit('f1', ['m0']),
+      commit('m0', []),
+    ]
+    const tree = computeBranchTree({ commits, remotes: ['upstream'], defaultBranch: 'main', tagsAreRows: false })
+    // Merges of main into a feature are not drawn …
+    expect(tree.merge.get('m2')).toBeNull()
+    // … and main still continues over upstream/main in lane 0.
+    expect(tree.lane.get('m2')).toBe(0)
+    expect(tree.lane.get('m1')).toBe(0)
+    expect(tree.defaultLine).toEqual(new Set(['m2', 'm1']))
+    expect(tree.lane.get('f2')).toBe(1)
+    expectInvariants(tree, commits)
   })
 
   test('tags as rows: the tag-only commit becomes a row on the default line and takes its commits', () => {

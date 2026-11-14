@@ -71,6 +71,12 @@ function edgePath(childLane: number, startY: number, parentLane: number, endY: n
   return path
 }
 
+/**
+ * The search-dimmed state of a row that does not match the query (ADR-0028: one
+ * token for every surface that dims rows — this graph and BranchGraph).
+ */
+export const SEARCH_DIMMED_CLASS = 'opacity-25 hover:opacity-60'
+
 /** Matched-character highlighting (ADR-0019): matched runs render as <mark>. */
 export function FuzzySegments({ highlight }: { highlight: FuzzyHighlight }) {
   return (
@@ -294,7 +300,7 @@ export function CommitGraph({
               aria-keyshortcuts={onContextMenu ? 'Shift+F10' : undefined}
               className={`flex w-full cursor-pointer items-center gap-2 pr-4 text-left whitespace-nowrap hover:bg-rowhover ${
                 commit.hash === selectedHash ? 'bg-rowselected' : ''
-              } ${searchQuery && !matched ? 'opacity-25 hover:opacity-60' : ''}`}
+              } ${searchQuery && !matched ? SEARCH_DIMMED_CLASS : ''}`}
               style={{ height: ROW_HEIGHT, paddingLeft: graphContentLeft(layout.laneCount) }}
               onClick={() => onSelectCommit?.(commit)}
               onContextMenu={

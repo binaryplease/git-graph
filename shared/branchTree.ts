@@ -250,8 +250,10 @@ export function buildBranchTree(
       }
     }
   }
+  const defaultFirstParentLine = new Set<string>()
   let walk: string | undefined = defaultTip ?? undefined
   while (walk !== undefined && commitByHash.has(walk)) {
+    defaultFirstParentLine.add(walk)
     enter(walk)
     walk = commitByHash.get(walk)!.parents[0]
   }
@@ -260,9 +262,16 @@ export function buildBranchTree(
   const orderedRows = order.filter((hash) => rows.has(hash))
 
   // Merges: a row whose tip a child took in as a non-first parent. The lowest
-  // such child is the merge closest to the tip.
+  // such child is the merge closest to the tip. A row on the default first-parent
+  // line records none: a feature merging the default branch in is not drawn
+  // (the open commits show it as a merge), and recording it would also stop
+  // `main` from continuing over `upstream/main` below.
   const merge = new Map<string, string | null>()
   for (const rowHash of rows) {
+    if (defaultFirstParentLine.has(rowHash)) {
+      merge.set(rowHash, null)
+      continue
+    }
     const merges = (children.get(rowHash) ?? []).filter(
       (childHash) => commitByHash.get(childHash)!.parents[0] !== rowHash,
     )
