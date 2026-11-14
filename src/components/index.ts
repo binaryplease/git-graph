@@ -9,6 +9,13 @@
 export { CommitGraph } from './CommitGraph'
 export type { CommitContextMenuRequest, CommitGraphProps, CommitGraphStats } from './CommitGraph'
 
+// The Branches view (concept A2 "Nur Refs"): one row per ref, the repository as
+// a tree of branch lines, a line's commits beneath its row once opened. Same
+// contract as CommitGraph — commits in, SVG + rows out, no fetching — with its
+// model in `computeBranchTree` (`git-graph/shared`).
+export { BranchGraph, BRANCH_LINE_COMMIT_LIMIT } from './BranchGraph'
+export type { BranchGraphProps, BranchGraphStats } from './BranchGraph'
+
 export { FileDiff } from './FileDiff'
 export type { FileDiffProps } from './FileDiff'
 

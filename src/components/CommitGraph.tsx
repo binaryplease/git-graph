@@ -21,16 +21,16 @@ import { CommitRefRow } from './RefPill'
 export const ROW_HEIGHT = 28
 const LANE_GAP = 16
 const X_OFFSET = 16
-const NODE_RADIUS = 5
+export const NODE_RADIUS = 5
 
 // Distinct lane hues, cycled by lane index. The values live in the theme tokens
 // (`--lane-*` in theme.css) so they retune per color theme — the dark set reads
 // on the dark canvas, the light override keeps its contrast on white — the same
 // way the SVG already reads `var(--color-canvas)` for node fills below.
 const LANE_COUNT = 10
-const laneColor = (laneIndex: number) => `var(--lane-${laneIndex % LANE_COUNT})`
+export const laneColor = (laneIndex: number) => `var(--lane-${laneIndex % LANE_COUNT})`
 
-const laneX = (lane: number) => X_OFFSET + lane * LANE_GAP
+export const laneX = (lane: number) => X_OFFSET + lane * LANE_GAP
 const baseRowY = (row: number) => row * ROW_HEIGHT + ROW_HEIGHT / 2
 
 // The gap between the graph column and a row's text content.
@@ -72,7 +72,7 @@ function edgePath(childLane: number, startY: number, parentLane: number, endY: n
 }
 
 /** Matched-character highlighting (ADR-0019): matched runs render as <mark>. */
-function FuzzySegments({ highlight }: { highlight: FuzzyHighlight }) {
+export function FuzzySegments({ highlight }: { highlight: FuzzyHighlight }) {
   return (
     <>
       {highlight.segments.map((segment, segmentIndex) =>

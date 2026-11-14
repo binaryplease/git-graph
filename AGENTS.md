@@ -2,7 +2,8 @@
 
 A **local git commit-graph viewer**: a standalone web service that lists the
 git repositories at a served root (or the exact set a repositories file names)
-and renders their commit DAGs, and — its one
+and renders their commit DAGs (as every commit, or as a tree of branch lines),
+and — its one
 write — checks out a branch, tag, or commit from a context menu on the graph. Sibling of
 `binp-file-explorer` in shape and conventions (local-machine service-first;
 later embeddable in nightshift-ui as a module).
@@ -121,6 +122,29 @@ consumers (standalone instance · shared package · nightshift-ui module):
     the commit-detail parser, plus per-file patch args for tracked files and an
     `--no-index` variant for untracked ones (`--no-ext-diff --no-textconv` stay
     load-bearing).
+  - `branchTree.ts` — the Branches view's model (concept "git-graph:
+    Branch-Ansicht", variant A2 "Nur Refs"), a sibling of `graphLayout.ts` that
+    does not touch it. Pure single-purpose steps composed by
+    `computeBranchTree`: `refRowSet` (which commits get a ref row — branch,
+    remote and HEAD always; a tag-only commit when tags are rows or when nothing
+    in the window descends from it; any commit nothing descends from),
+    `findDefaultTip` (the *local* branch the branch listing names, read through
+    `classifyRefDecoration`; no `origin/` guess), `assignLineOwners` (the line
+    rule: the default first-parent line first, each row on it owning the commits
+    down to the next row; then every other row's first-parent run down to the
+    first owned commit, the longest remaining run first), `buildBranchTree`
+    (runs, forks, the walk order — down the default line, every commit after all
+    its children, a commit's same-run child first — the merge that took each tip,
+    chains where a row's fork is another row's tip, and lanes placed per chain
+    over its whole span, so they never depend on which rows are open),
+    `attributeMergedCommits` (the commits on no line, each counted once on the
+    lowest merge that reaches it, so lines plus these cover the window) and
+    `lineLeftBy` (the "from …" name). Computed in the client from the loaded
+    log; `git log --simplify-by-decoration` was ruled out as a source because it
+    draws `spike/pdf-fonts` as forking from a tag instead of from
+    `spike/pdf-renderer`. Measured on the concept's 110-commit `ledgerline`
+    repository (94 commits on lines, 16 as "+N merged") and on 25 local
+    repositories: order topological, every row a lane, no commit on two lines.
   - `fuzzy.ts` — subsequence fuzzy matcher with matched-character segments
     (ADR-0019).
   - `gitActions.ts` — the git-action context menu as data (issue #2): the one
@@ -274,7 +298,13 @@ consumers (standalone instance · shared package · nightshift-ui module):
   Clipboard API), `ConfirmActionDialog.tsx` (the statement a git write makes
   before it runs, and where git's refusal comes back, verbatim, to retry or
   cancel), `CommitGraph.tsx` (commits in, SVG + rows
-  out), `CommitDetailPanel.tsx` (metadata, the verbatim commit message, changed
+  out), `BranchGraph.tsx` (the Branches view: `computeBranchTree` in, one row
+  per ref plus the commits of open lines out — same contract as `CommitGraph`,
+  including the `selectedDetail` slot, and it reuses `CommitGraph`'s lane
+  geometry, `FuzzySegments` and `CommitRefRow`, so pills, the checked-out ring
+  and the no-`HEAD ->` rule hold there too; open state is internal, and a
+  selection made elsewhere opens the line that shows it — a side commit appears
+  beneath the merge that brought it in), `CommitDetailPanel.tsx` (metadata, the verbatim commit message, changed
   files, copy-hash, parent navigation — in that order),
   `FileDiff.tsx` (one diff, unified or split by prop), `MultiFileDiffView.tsx`
   (file list on top + per-file diffs loaded lazily as each nears the viewport),
@@ -311,7 +341,13 @@ consumers (standalone instance · shared package · nightshift-ui module):
   - App-only chrome (localStorage-backed, deliberately kept out of the host
     barrel per ADR-0032): `lib/theme.ts` (`useTheme` + Zod-validated persisted
     mode, default `system`) with `ThemeToggle.tsx`, and `lib/detailLayout.ts`
-    (`useDetailLayout`, default `inline`) with `DetailLayoutToggle.tsx`.
+    (`useDetailLayout`, default `inline`) with `DetailLayoutToggle.tsx`, and
+    `lib/graphView.ts` (`useGraphView`: the Branches | Commits choice, default
+    `commits`, and Tags as rows, default off — one JSON value under
+    `git-graph:graph-view`, every field defaulted and caught) with
+    `GraphViewToggle.tsx` (`GraphViewToggle` + `TagsAsRowsToggle`). In the
+    Branches view `App.tsx` leaves Up/Down to the view's own rows rather than
+    walking the log order.
     `CommitDetailPanel` takes a `variant` (`inline` | `sidebar`) + `headerActions`
     seam (ADR-0027) and `CommitGraph` a `selectedDetail` inline slot that offsets
     the SVG for rows below the expansion; the layout algorithm is untouched. The
@@ -321,9 +357,9 @@ consumers (standalone instance · shared package · nightshift-ui module):
     inline variant leaves to the commit row above it.
 
 The render layer is importable by subpath — `package.json` `exports` maps
-`./components` (the fetch-free components, ref pill and git-action menu
-included), `./shared` (schema + layout + ref grouping + fuzzy + the menu
-descriptor),
+`./components` (the fetch-free components, ref pill, git-action menu and
+Branches view included), `./shared` (schema + layout + branch tree + ref
+grouping + fuzzy + the menu descriptor),
 `./highlighter` (`lib/highlighter.ts`), and `./theme.css`, so nightshift-ui can
 source-alias them (no proxy, no forked copy).
 
@@ -460,7 +496,30 @@ covered too: `services/port.test.ts` (probe/walk against real binds),
 `bind-exposure.test.ts` (loopback-default / non-loopback-refusal, ADR-0037 §4),
 `cli/args.test.ts` (argv routing + flag parsing), and `scripts/dev-ports.test.ts`
 (env pinning + reassignment announcements).
-Currently 342 tests across 27 files.
+The Branches view is pinned on two levels. `shared/branchTree.test.ts` builds a
+small `ledgerline`-shaped history in the test (main over `upstream/main`, a
+chain off the default line, a tag-only tip, a merged branch,
+`spike/pdf-renderer` with `spike/pdf-fonts` forked from it, a deleted branch
+merged in) and pins: the row order is topological; no commit lies on two lines;
+lines plus merged-in side commits cover every commit once; every row gets a lane;
+lane 0 is the default line; `spike/pdf-fonts` forks from `spike/pdf-renderer`,
+not from main; a ref whose fork is another ref's tip continues its lane; a
+merged ref has its merge recorded; a deleted branch is counted on its merge, and
+a side commit merged twice once, on the earlier merge; lanes are a function of
+the log alone; the Tags-as-rows rule; no `origin/` guess for the default tip.
+`src/components/BranchGraph.test.tsx` pins the view: one row per ref and no
+commit rows while closed; a click lists the line beneath its row and toggles
+`aria-expanded`; ref-node x positions unchanged by opening rows; "show N more"
+after 25 (and a selection past it opens the line far enough); "+N merged" with
+its title; "from …" naming the line left and absent on the default line and on
+continuations; selection, the inline detail slot, a selected side commit beneath
+its merge, closing a line clearing its selection; search dimming, auto-open,
+`<mark>`, "N of M commits", and the stats; the keyboard contract, including
+that handled keys never reach a window listener. `src/lib/graphView.test.tsx`
+pins the switch: Commits by default, the choice and the tags toggle surviving a
+remount through `localStorage`, a stored value that fails validation falling
+back, and Tags as rows disabled with its reason in the Commits view.
+Currently 393 tests across 30 files.
 
 ## UX conventions
 
@@ -534,6 +593,28 @@ Currently 342 tests across 27 files.
   line carries weight but is never re-wrapped or re-punctuated: the block's text
   is built as one string and sliced, so what renders is what git stored. The
   sidebar's header keeps the subject too; that repeat is accepted.
+- Branches view (variant A2): a **Branches | Commits** switch in the header,
+  Commits by default, persisted. Branches draws one row per ref; each ref's line
+  is its own first-parent commits and joins the line it leaves at its fork, with
+  no dots at forks or merges and no outline around nodes. Ref node radius 3.75 px
+  on a 2 px line; commit dots of an open line 2.5 px; merge commits a 2.5 px ring
+  with a 1.5 px stroke. A ref row reads chevron, pills (`CommitRefRow`), "N
+  commits", then right-aligned "from <line it leaves>" (omitted on the default
+  line and on a continuation), the tip's author and relative age (exact date as
+  title). An open line is tinted with its lane colour, lists at most 25 commits,
+  then a "show N more commits" row; opening never moves a lane, but other refs'
+  rows stay at their place in the order, so a long open line can be interleaved
+  with them. Merges of the default branch into a feature are not drawn; the open
+  commits show them as ring dots. Commits on no line arrive as "+N merged" on
+  their merge, with a title saying the Commits view draws them. Search
+  (subject/hash/author, as in Commits) dims rows without a match and opens every
+  line holding one in full; clicking such a row still closes it. Keyboard:
+  Up/Down move, Right opens, Left closes or goes from a commit to its ref row,
+  Enter/Space activate, Escape clears the selection. **Tags as rows** (off by
+  default) gives every tagged commit a row; off, a tag-only commit gets one only
+  when nothing in the window descends from it. In the Commits view the toggle
+  stays visible, `aria-disabled`, with its reason (ADR-0025). The git-action
+  context menu is not wired on Branches-view rows yet.
 - Diff tabs (ADR-0031): a changed file, a whole commit, and a branch (against
   the default branch unless a base is chosen) each open in a standalone tab —
   via cmd/ctrl/middle-click on the file row, or the visible external-link /

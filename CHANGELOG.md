@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A Branches view (concept "git-graph: Branch-Ansicht", variant A2 "Nur
+  Refs").** The header has a **Branches | Commits** switch. Commits is the
+  existing graph and stays the default. Branches shows one row per ref and draws
+  the repository as a tree of branch lines: each ref's line is its own
+  first-parent commits. The default branch's line is handed out first and takes
+  lane 0; the other refs claim their commits longest run first, and each line
+  joins the line it left at its fork. A ref whose fork is another ref's tip
+  continues that ref's lane (`main` over `upstream/main`), and a merged ref gets a
+  second line from its merge. Clicking a ref row lists the line's commits beneath
+  it, at most 25 and then a "show N more commits" row; opening a row never moves
+  a lane. A ref row reads chevron, ref pills, "N commits", "from <line it
+  leaves>", and the tip's author and age. A merge that brought in commits lying
+  on no line (a deleted branch's) shows "+N merged". Selecting a commit opens the
+  same commit detail as the Commits view, inline or in the sidebar. The fuzzy
+  search dims rows without a match, opens every line holding one in full, and
+  marks the matched characters. Keyboard: Up/Down move between rows, Right opens
+  a ref row, Left closes it or moves from a commit to its ref row, Enter/Space
+  activate, Escape clears the selection. A **Tags as rows** toggle (off by
+  default; disabled with its reason in the Commits view) gives every tagged
+  commit its own row. Both choices persist in `localStorage`
+  (`git-graph:graph-view`) and fall back to the defaults on a value that fails
+  validation. The model is `computeBranchTree` in `shared/branchTree.ts`
+  (exported from `git-graph/shared`), computed in the client from the log the
+  app already loads, so there is no new route. The view is `BranchGraph`, a
+  fetch-free component exported from `git-graph/components`. `computeGraphLayout`
+  and its fixture are unchanged.
 - **A git-action context menu, with checkout as the first write the service has
   ever had.** Right-click a commit row or a ref pill, or press `Shift+F10` or the
   context-menu key on a focused row. The menu can check out a local branch, a

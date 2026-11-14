@@ -9,6 +9,9 @@
 //   - refGroup    — folding a commit's ref decorations into one group per ref
 //                   identity (a local branch and its agreeing remotes become one
 //                   pill), plus the classifier the grouping runs on.
+//   - branchTree  — the Branches view's model: one row per ref, each ref's
+//                   first-parent line, the walk order, lanes, merges, and the
+//                   merged-in commits that lie on no line.
 //   - fuzzy       — the subsequence matcher with matched-character segments
 //                   (ADR-0019), the same one the graph highlights with.
 //   - gitActions  — the git-action context menu as data: which entries a commit
@@ -18,6 +21,7 @@
 //                   posting to the write routes sends what the server checks.
 export * from './git.schema'
 export * from './graphLayout'
+export * from './branchTree'
 export * from './refGroup'
 export * from './fuzzy'
 export * from './gitActions'
