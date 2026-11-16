@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { IconCircleCheck, IconAlertCircle, IconGitMerge, IconSearch, IconX } from '@tabler/icons-react'
+import {
+  IconAlertCircle,
+  IconArrowLeft,
+  IconArrowRight,
+  IconArrowsDownUp,
+  IconCircleCheck,
+  IconGitMerge,
+  IconSearch,
+  IconX,
+} from '@tabler/icons-react'
 import { describeCheckout, findHeadState } from '../shared/gitActions'
 import type {
   BranchList,
@@ -24,14 +33,17 @@ import { commitDiffHref, compareHref, fileDiffHref, workingHref } from './lib/di
 import { loadHighlighter } from './lib/highlighter'
 import { useTheme } from './lib/theme'
 import { useDetailLayout } from './lib/detailLayout'
+import { useGraphView } from './lib/graphView'
 import { announceRepositoryChange, useRepositoryChanges } from './lib/repositoryChanges'
 import {
+  BranchGraph,
   CommitGraph,
   CommitDetailPanel,
   ConfirmActionDialog,
   GitActionMenu,
   UncommittedChangesRow,
   graphContentLeft,
+  type BranchGraphStats,
   type CommitContextMenuRequest,
   type CommitGraphStats,
   type GitActionNotice,
@@ -43,10 +55,14 @@ import {
 const NOTICE_MILLISECONDS = 6000
 import { ThemeToggle } from './components/ThemeToggle'
 import { DetailLayoutToggle } from './components/DetailLayoutToggle'
+import { GraphViewToggle, TagsAsRowsToggle } from './components/GraphViewToggle'
 
 export function App() {
   const { themeMode, setThemeMode, resolvedTheme } = useTheme()
   const { detailLayout, setDetailLayout } = useDetailLayout()
+  // Commits (every commit a row) or Branches (one row per ref, a line's commits
+  // on click); the Commits view is the default.
+  const { graphView, setGraphView, tagsAsRows, setTagsAsRows } = useGraphView()
   const [repositoryList, setRepositoryList] = useState<RepositoryList | null>(null)
   // The selected repository's relativePath — '' is a valid value (the served
   // root itself is a repository), so "nothing selected" is null.
@@ -67,6 +83,12 @@ export function App() {
     laneCount: 0,
     matchCount: null,
   })
+  const [branchStats, setBranchStats] = useState<BranchGraphStats>({
+    laneCount: 0,
+    refCount: 0,
+    matchCount: null,
+  })
+  const isBranchView = graphView === 'branches'
   // The commit whose details are open. The hash is the selection; the detail is
   // fetched for it, so the panel can show the hash while the payload is in
   // flight and after a failure.
@@ -241,6 +263,8 @@ export function App() {
   )
 
   const handleGraphStats = useCallback((stats: CommitGraphStats) => setGraphStats(stats), [])
+  const handleBranchStats = useCallback((stats: BranchGraphStats) => setBranchStats(stats), [])
+  const clearSelection = useCallback(() => setSelectedCommitHash(null), [])
   // Clicking a row toggles its detail: selecting a new commit opens it, clicking
   // the already-open one closes it (so the inline expansion collapses on a second
   // click of its own row). Parent navigation from the panel sets the hash
@@ -349,6 +373,9 @@ export function App() {
         return
       }
       if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+      // The Branches view moves focus through its own rows; walking the log
+      // order there would jump between lines.
+      if (isBranchView) return
       const currentRow = commits.findIndex((commit) => commit.hash === selectedCommitHash)
       if (currentRow < 0) return
       const nextRow = currentRow + (event.key === 'ArrowDown' ? 1 : -1)
@@ -359,14 +386,16 @@ export function App() {
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [commits, selectedCommitHash, isOverlayOpen])
+  }, [commits, selectedCommitHash, isOverlayOpen, isBranchView])
 
+  const activeStats = isBranchView ? branchStats : graphStats
   const readout = [
-    hasCommits &&
-      `${commits.length}${commitLog?.truncated ? '+' : ''} commits · ${graphStats.laneCount} lane${graphStats.laneCount === 1 ? '' : 's'}`,
-    graphStats.matchCount !== null &&
+    hasCommits && `${commits.length}${commitLog?.truncated ? '+' : ''} commits`,
+    hasCommits && isBranchView && `${branchStats.refCount} ref${branchStats.refCount === 1 ? '' : 's'}`,
+    hasCommits && `${activeStats.laneCount} lane${activeStats.laneCount === 1 ? '' : 's'}`,
+    activeStats.matchCount !== null &&
       hasCommits &&
-      `${graphStats.matchCount} match${graphStats.matchCount === 1 ? '' : 'es'}`,
+      `${activeStats.matchCount} match${activeStats.matchCount === 1 ? '' : 'es'}`,
   ]
     .filter(Boolean)
     .join(' · ')
@@ -413,6 +442,10 @@ export function App() {
               Git Graph <small className="font-normal text-faint">git-graph</small>
             </span>
           </div>
+
+          {/* The graph's own view controls, at the start of its frame (ADR-0031). */}
+          <GraphViewToggle graphView={graphView} onSelectGraphView={setGraphView} />
+          <TagsAsRowsToggle tagsAsRows={tagsAsRows} onToggle={setTagsAsRows} applies={isBranchView} />
 
           <div className="ml-auto flex flex-wrap items-center gap-2.5">
             <label className="flex items-center gap-1.5 text-dim">
@@ -477,7 +510,7 @@ export function App() {
             <UncommittedChangesRow
               working={workingTree}
               href={workingHref(selectedRepository)}
-              contentLeft={graphContentLeft(graphStats.laneCount)}
+              contentLeft={graphContentLeft(activeStats.laneCount)}
             />
           )}
           {loadError !== null && (
@@ -505,7 +538,21 @@ export function App() {
           {loadError === null && isLoadingLog && commitLog === null && (
             <p className="px-4 py-6 text-faint">Loading commit history…</p>
           )}
-          {loadError === null && hasCommits && (
+          {loadError === null && hasCommits && isBranchView && (
+            <BranchGraph
+              commits={commits}
+              remotes={remotes}
+              defaultBranch={defaultBranch}
+              tagsAsRows={tagsAsRows}
+              searchQuery={searchQuery.trim()}
+              onStats={handleBranchStats}
+              selectedHash={selectedCommitHash}
+              onSelectCommit={handleSelectCommit}
+              onClearSelection={clearSelection}
+              selectedDetail={detailLayout === 'inline' ? detailPanel : null}
+            />
+          )}
+          {loadError === null && hasCommits && !isBranchView && (
             <CommitGraph
               commits={commits}
               remotes={remotes}
@@ -552,15 +599,34 @@ export function App() {
         )}
 
         <footer className="flex flex-wrap gap-4 border-t border-line bg-raised px-4 py-1.5 text-[11.5px] text-faint">
-          <span className="inline-flex items-center gap-1.5">
-            <span className="inline-block h-[9px] w-[9px] rounded-full bg-accent" /> commit
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="inline-block h-[9px] w-[9px] rounded-full border-2 border-dim" /> merge
-            (2+ parents)
-          </span>
-          <span>color = lane / branch column</span>
-          {graphStats.matchCount === 0 && hasCommits && <span>no rows match your search</span>}
+          {isBranchView ? (
+            <>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="inline-block h-[7.5px] w-[7.5px] rounded-full bg-accent" /> ref
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="inline-block h-[5px] w-[5px] rounded-full bg-accent" /> commit on an open line
+              </span>
+              <span>line = the ref's own first-parent commits</span>
+              <span className="ml-auto inline-flex items-center gap-1">
+                <IconArrowRight size={12} aria-label="right arrow" /> open ·
+                <IconArrowLeft size={12} aria-label="left arrow" /> close ·
+                <IconArrowsDownUp size={12} aria-label="up and down arrows" /> move
+              </span>
+            </>
+          ) : (
+            <>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="inline-block h-[9px] w-[9px] rounded-full bg-accent" /> commit
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="inline-block h-[9px] w-[9px] rounded-full border-2 border-dim" /> merge
+                (2+ parents)
+              </span>
+              <span>color = lane / branch column</span>
+            </>
+          )}
+          {activeStats.matchCount === 0 && hasCommits && <span>no rows match your search</span>}
         </footer>
       </div>
 
