@@ -7,7 +7,7 @@ import { join } from 'node:path'
 // on the real server: `server/index.ts` is launched as its own process against a
 // scratch repository, the way `bgg` launches it, so what is pinned here is the
 // wiring the server actually ships — the guard mounted in front of discovery,
-// the docs, every git read, and the checkout write.
+// the docs, every git read, and the checkout and merge writes.
 //
 // Requests go over a raw TCP socket, not `fetch`: the test DOM (happy-dom,
 // preloaded for the component tests) replaces `fetch`/`Request` and drops the
@@ -16,10 +16,22 @@ import { join } from 'node:path'
 // bytes a test names — including no Host at all.
 
 const ALLOWED_HOST = 'graph.example.com'
-const gitEnvironment = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' }
+// The identity lets the server's own `git merge --no-ff` write its merge commit
+// with the user's global config shut out.
+const gitEnvironment = {
+  ...process.env,
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_SYSTEM: '/dev/null',
+  GIT_AUTHOR_NAME: 'Test',
+  GIT_AUTHOR_EMAIL: 'test@example.invalid',
+  GIT_COMMITTER_NAME: 'Test',
+  GIT_COMMITTER_EMAIL: 'test@example.invalid',
+}
 
 let scratchRoot: string
 let repositoryPath: string
+// A second repository for the merge: `topic` one commit past `main`.
+let mergeRepositoryPath: string
 let serverProcess: ReturnType<typeof Bun.spawn>
 let port: number
 
@@ -82,6 +94,11 @@ beforeAll(async () => {
   scratchRoot = mkdtempSync(join(tmpdir(), 'git-graph-host-guard-'))
   repositoryPath = join(scratchRoot, 'victim')
   createTaggedRepository(repositoryPath)
+  mergeRepositoryPath = join(scratchRoot, 'merge-victim')
+  createTaggedRepository(mergeRepositoryPath)
+  gitIn(mergeRepositoryPath, 'switch', '-c', 'topic')
+  gitIn(mergeRepositoryPath, 'commit', '--allow-empty', '-m', 'topic work')
+  gitIn(mergeRepositoryPath, 'switch', 'main')
   const launched = await launchServer({
     root: scratchRoot,
     scratch: scratchRoot,
@@ -188,6 +205,22 @@ const postCheckout = (headers: Record<string, string>, body: string) => postChec
 
 const tagCheckout = '{"repo":"victim","target":{"kind":"tag","name":"v1"}}'
 
+const postMerge = (headers: Record<string, string>, body: string) =>
+  sendRawTo(
+    port,
+    `POST /api/git/merge HTTP/1.1\r\n` +
+      headerLines({
+        ...headers,
+        'X-Git-Graph-Action': '1',
+        'Content-Type': 'application/json',
+        'Content-Length': String(Buffer.byteLength(body)),
+        Connection: 'close',
+      }) +
+      `\r\n${body}`,
+  )
+
+const topicMerge = '{"repo":"merge-victim","branch":"topic","into":"main"}'
+
 describe('the Host guard on the running server', () => {
   test('serves loopback names, with and without a port, and the names GIT_GRAPH_ALLOWED_HOSTS lists', async () => {
     for (const host of ['localhost', `localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`, ALLOWED_HOST]) {
@@ -261,6 +294,50 @@ describe("the checkout's Origin check on the running server", () => {
     )
     expect(response.status).toBe(200)
     expect(headState()).toEqual({ hash: git('rev-parse', 'v1^{commit}'), branch: '' })
+  })
+})
+
+// The merge joins the checkout's route family behind the same guards: the Host
+// guard first, then the cross-origin gate, then membership.
+describe('the merge on the running server', () => {
+  const mergeHeadState = () => headStateOf(mergeRepositoryPath)
+
+  test('refuses a merge with a foreign Host — the rebound page — with HEAD untouched', async () => {
+    const before = mergeHeadState()
+    const response = await postMerge(
+      {
+        Host: `rebind.attacker.test:${port}`,
+        Origin: `http://rebind.attacker.test:${port}`,
+        'Sec-Fetch-Site': 'same-origin',
+      },
+      topicMerge,
+    )
+    expect(response.status).toBe(421)
+    expect(mergeHeadState()).toEqual(before)
+  })
+
+  test('refuses a merge from a foreign Origin, with HEAD untouched', async () => {
+    const before = mergeHeadState()
+    const response = await postMerge({ Host: `127.0.0.1:${port}`, Origin: 'http://evil.example' }, topicMerge)
+    expect(response.status).toBe(403)
+    expect(mergeHeadState()).toEqual(before)
+  })
+
+  // Last, because it moves HEAD: the git-graph page's own merge.
+  test('merges for the git-graph page itself: a --no-ff merge commit on main', async () => {
+    const pageHeaders = { Host: `localhost:${port}`, Origin: `http://localhost:${port}`, 'Sec-Fetch-Site': 'same-origin' }
+    const preview = await get('/api/git/merge/preview?repo=merge-victim&branch=topic', pageHeaders)
+    expect(preview.status).toBe(200)
+    expect(JSON.parse(preview.body)).toMatchObject({ into: 'main', canFastForward: true, uncommittedFiles: [] })
+
+    const mainBefore = gitIn(mergeRepositoryPath, 'rev-parse', 'main')
+    const response = await postMerge(pageHeaders, topicMerge)
+    expect(response.status).toBe(200)
+    expect(JSON.parse(response.body)).toMatchObject({ branch: 'main', fastForward: false })
+    expect(mergeHeadState().branch).toBe('refs/heads/main')
+    expect(gitIn(mergeRepositoryPath, 'log', '-1', '--format=%P')).toBe(
+      `${mainBefore} ${gitIn(mergeRepositoryPath, 'rev-parse', 'topic')}`,
+    )
   })
 })
 

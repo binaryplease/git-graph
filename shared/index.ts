@@ -16,7 +16,7 @@
 //                   (ADR-0019), the same one the graph highlights with.
 //   - gitActions  — the git-action context menu as data: which entries a commit
 //                   row or ref pill offers, why one cannot apply, and what a
-//                   checkout says before it runs.
+//                   checkout or a merge says before it runs.
 //   - mutationRequest — the header a mutating request must carry, so a host
 //                   posting to the write routes sends what the server checks.
 export * from './git.schema'

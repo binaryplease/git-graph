@@ -21,7 +21,7 @@ import { MUTATION_REQUEST_HEADER } from '../../shared/mutationRequest'
 // nightshift-ui's `server/fileExplorer.ts`.
 
 // What the git routes actually use: GET for the reads, POST with a JSON body and
-// the mutation header for a checkout. No credentials — the server has none.
+// the mutation header for a checkout or a merge. No credentials — the server has none.
 const ALLOWED_METHODS = 'GET, POST'
 const ALLOWED_HEADERS = `content-type, ${MUTATION_REQUEST_HEADER.toLowerCase()}`
 const PREFLIGHT_MAX_AGE_SECONDS = '600'

@@ -54,13 +54,20 @@ export type { UncommittedChangesRowProps } from './UncommittedChangesRow'
 // through before it runs. Both fetch-free: the host passes the handlers (a
 // missing one leaves its entries disabled with a reason, never absent) and runs
 // the action itself on confirm. Their wording — which entries, why one cannot
-// apply, what a checkout says — is `buildGitMenuSections` / `describeCheckout`
+// apply, what a checkout or merge says — is `buildGitMenuSections` / `describeCheckout` / `describeMerge`
 // in `git-graph/shared`, so every surface reads the same.
 export { GitActionMenu } from './GitActionMenu'
 export type { GitActionMenuAnchor, GitActionMenuProps, GitActionNotice } from './GitActionMenu'
 
 export { ConfirmActionDialog } from './ConfirmActionDialog'
 export type { ConfirmActionDialogProps } from './ConfirmActionDialog'
+
+// The merge's confirmation: ConfirmActionDialog plus the Fast Forward option and
+// the state that blocks a merge (uncommitted changes, nothing to merge, a stale
+// checked-out branch), read from the `MergePreview` the host fetches. Its
+// wording is `describeMerge` / `mergeBlockedReason` / `describeMergeFailure`.
+export { ConfirmMergeDialog } from './ConfirmMergeDialog'
+export type { ConfirmMergeDialogProps } from './ConfirmMergeDialog'
 
 // The graph geometry a host needs to align that row — and any other non-commit
 // row — with the commit subjects and the node column, rather than guessing a

@@ -3,8 +3,9 @@
 A **local git commit-graph viewer**: a standalone web service that lists the
 git repositories at a served root (or the exact set a repositories file names)
 and renders their commit DAGs (as every commit, or as a tree of branch lines),
-and — its one
-write — checks out a branch, tag, or commit from a context menu on the graph. Sibling of
+and — its two
+writes — checks out a branch, tag, or commit, or merges a local branch into the
+checked-out branch, from a context menu on the graph. Sibling of
 `binp-file-explorer` in shape and conventions (local-machine service-first;
 later embeddable in nightshift-ui as a module).
 
@@ -159,12 +160,34 @@ consumers (standalone instance · shared package · nightshift-ui module):
     repository, the detached-HEAD warning, git's rule about uncommitted changes).
     A row menu lists the commit first and then every ref on it — which is what
     makes branch and tag checkout reachable from the keyboard, since pills are
-    not focusable; a pill menu leads with its own ref.
+    not focusable; a pill menu leads with its own ref. A local branch also gets
+    "Merge x into <checked-out branch>" (`mergeTargetForEntry`), *except* the
+    checked-out branch itself, which gets no merge entry at all — the
+    operator's exception to "no entry ever missing" (see UX conventions). The
+    merge's statement and states are `describeMerge`, `mergeBlockedReason`,
+    `fastForwardUnavailableReason` and `describeMergeFailure`.
   - `checkout.ts` — `git switch` argument shapes for a resolved checkout.
     `switch`, never `checkout` (which also restores paths); a branch after `--`
     with `--no-guess` (no silent tracking-branch creation), a detach target
     always a full `refs/tags/…` refname or a full hash, `advice.detachedHead=false`
     so git's report is one line.
+  - `merge.ts` — `git merge` argument shapes for a resolved merge: `--no-ff
+    --no-log --cleanup=strip --no-edit -m <message>` or `--ff-only`, always on the **full hash**
+    `refs/heads/<branch>` resolved to, after `--end-of-options`. Never the short
+    name: git resolves a short name through `.git/<name>`, `refs/<name>` and
+    `refs/tags/<name>` before `refs/heads/<name>`, so a same-named tag a plain
+    fetch can bring in, a branch called `FETCH_HEAD`, or one called
+    `remotes/origin/x` would merge another commit than the one checked
+    (NST18837). The message is git's own default, built by the `git
+    fmt-merge-msg` step `git merge <branch>` runs (`mergeMessageInput` →
+    `Merge branch 'x'`, `… into y` off main, the operator's `merge.log` /
+    `merge.suppressDest` applied — `--no-log` keeps git from appending a second
+    shortlog under the bare hash, `--cleanup=strip` drops `fmt-merge-msg`'s
+    `# By`/`# Via` comment lines, as a plain `git merge <branch>` does);
+    `advice.diverging=false`; the
+    `git merge --abort` and tracked-changes (`git diff --name-only -z HEAD`)
+    argument lists; `mergeReport` (git's one-line report); and the
+    uncommitted-changes wording the server and the dialog share.
   - `mutationRequest.ts` — the header (`X-Git-Graph-Action: 1`) every mutating
     request carries, shared by the client that sends it and the guard that checks
     it.
@@ -205,8 +228,9 @@ consumers (standalone instance · shared package · nightshift-ui module):
   `/api/git/working` + `/api/git/working/diff` (the working tree — uncommitted
   changes vs HEAD, and one file of it; tracked via `git diff HEAD`, untracked via
   `git ls-files --others` diffed from `/dev/null`, membership-guarded path).
-  - **The write surface** is exactly one route, `POST /api/git/checkout`
-    (issue #2's first slice). It holds the read routes' membership line in
+  - **The write surface** is exactly two routes, `POST /api/git/checkout`
+    (issue #2's first slice) and `POST /api/git/merge` (its second). The
+    checkout holds the read routes' membership line in
     `resolveCheckout`: a branch must be one `for-each-ref refs/heads` lists, a
     tag one `refs/tags` lists (handed on as the full refname, so a same-named
     branch cannot win), a commit hash must `rev-parse` to a commit whose full hash
@@ -214,7 +238,26 @@ consumers (standalone instance · shared package · nightshift-ui module):
     --contains` / `merge-base --is-ancestor` — the `git log --all` history); only
     git's own strings reach `git switch`. git's safety stays in charge: a refused
     switch (uncommitted changes it would overwrite) is a 409 whose message is
-    git's stderr verbatim. In front of it, `services/mutation-guard.ts` (its own
+    git's stderr verbatim. The merge (`merge` in `services/git.ts`, its checks
+    shared with the read-only `GET /api/git/merge/preview` through
+    `inspectMerge`) resolves the branch against `for-each-ref refs/heads` and
+    refuses, before git runs and with HEAD untouched: HEAD not on the `into`
+    branch the request names (`stale-head` — the client's view can be stale), a
+    merge in progress (the `MERGE_HEAD` *file*, at `rev-parse --git-path` —
+    `rev-parse --verify MERGE_HEAD` would also resolve a branch of that name),
+    tracked changes against HEAD staged or not
+    (`uncommitted-changes`; untracked files do not block), a branch HEAD already
+    contains (`nothing-to-merge`), and a fast-forward asked for where HEAD is not
+    an ancestor (`fast-forward-impossible`) — ancestry is git's
+    `merge-base --is-ancestor`, never the client's window. git's own refusal is
+    `merge-refused` with its output verbatim; a merge that stopped part-way
+    (`MERGE_HEAD` left) is undone with `git merge --abort` — answered
+    `conflict-aborted` with git's output when `ls-files --unmerged` lists
+    conflicts, `merge-refused` when a hook refused the merge commit — and an
+    abort that fails is
+    `abort-failed` (500), never reported clean. Every failure body is a
+    `MergeError` (`error`, `reason`, `gitOutput`). Nothing is pushed or fetched.
+    In front of both writes, `services/mutation-guard.ts` (its own
     module, ADR-0032) is the cross-origin gate: the custom header, a JSON content
     type, `Sec-Fetch-Site` (when sent) of `same-origin`, and `Origin` (when sent)
     naming a host the server answers for — so a foreign page in the user's
@@ -300,7 +343,12 @@ consumers (standalone instance · shared package · nightshift-ui module):
   wire renders disabled with a reason, never absent; copying is its own, via the
   Clipboard API), `ConfirmActionDialog.tsx` (the statement a git write makes
   before it runs, and where git's refusal comes back, verbatim, to retry or
-  cancel), `CommitGraph.tsx` (commits in, SVG + rows
+  cancel; a `blockedReason` keeps its confirm `aria-disabled` with the reason on
+  screen, and an options slot takes an action's options),
+  `ConfirmMergeDialog.tsx` (the merge's confirmation over a `MergePreview` the
+  host fetches: the Fast Forward checkbox, unchecked by default and disabled
+  with its reason where a fast-forward is not possible, and the blocked states),
+  `CommitGraph.tsx` (commits in, SVG + rows
   out), `BranchGraph.tsx` (the Branches view: `computeBranchTree` in, one row
   per ref plus the commits of open lines out — same contract as `CommitGraph`,
   including the `selectedDetail` slot, and it reuses `CommitGraph`'s lane
@@ -409,6 +457,25 @@ git runs with HEAD untouched (unknown and remote-only branch names, a tag asked
 for as a branch and vice versa, option- and revision-shaped names, a dangling
 commit no ref reaches, a non-hex hash, a path-shaped repository id); and git's
 refusal over uncommitted changes coming back with its stderr, the changes intact.
+The merge's service half does the same against its own fresh fixture per test
+(`main` with `ahead`, `diverged`, `clash`, `merged` and `fresh` branches, a tag,
+and a remote-only ref): a `--no-ff` merge commit with git's default message even
+where a fast-forward was possible; a fast-forward when chosen and possible, and
+refused when not; tracked changes, unstaged and staged, refused with HEAD, index
+and tree intact; an untracked file not blocking, and one the merge would
+overwrite coming back as git's refusal verbatim; a conflict aborted with HEAD,
+index and tree as before and git's `CONFLICT` line kept; nothing to merge
+refused; unknown, remote-only, tag, option- and revision-shaped branch names
+refused before git runs; the listed branch merged and never another ref of its
+short name (a same-named tag, also under `--ff-only`; a local
+`remotes/origin/feature` beside a real remote-tracking ref; a local `FETCH_HEAD`
+while `.git/FETCH_HEAD` names another commit); git's default message off main
+(`Merge branch 'ahead' into diverged`), and with `merge.log` on identical to what a
+plain `git merge <branch>` writes (one shortlog); a local branch named `MERGE_HEAD` not
+read as a merge in progress; a `pre-merge-commit` hook refusal undone and
+reported as `merge-refused`; a stale `into` (another branch, a detached HEAD)
+refused; the preview's fields from git's ancestry; and a repository outside the
+served set refused.
 The served set is pinned in `services/repository-set.test.ts` (the file parser:
 absolute-only, comments, normalisation, de-duplication; the listed set serving
 exactly its members, leaving out non-repositories, following the file as it is
@@ -437,7 +504,9 @@ names served, a foreign Host refused with 421 on discovery, docs, spec, and git
 reads, a missing Host refused with 400, the audit's rebound checkout refused with
 HEAD untouched, a foreign `Origin` refused with HEAD untouched, the discovery
 document ignoring a foreign `X-Forwarded-Host`, and the page's own checkout still
-succeeding. The same file launches a second server in the embedding-host
+succeeding; likewise a merge with a foreign Host (421) and one with a foreign
+`Origin` (403) leave HEAD untouched, and the page's own merge (preview, then a
+`--no-ff` merge commit) succeeds. The same file launches a second server in the embedding-host
 configuration (a repositories file naming one repository beside the root and one
 outside any common root, plus two allowed origins): the listing is exactly the
 file's members by absolute path; a configured origin reads (CORS reflected for that
@@ -449,14 +518,25 @@ untouched; the file is followed as it is rewritten; `/api/status` reports the fi
 and the origins. On the default server another loopback origin gets no CORS and no
 checkout, and two boot-failure cases pin that a malformed origin or a
 missing/relative repositories file stops the server. `shared/gitActions.test.ts` pins the descriptor:
-no entry ever missing, the reasons (already checked out, default branch, remote
-only, HEAD already detached here, no full hash), the row/pill section order,
-and the checkout statement's warnings. DOM tests cover `GitActionMenu`
+no entry ever missing — save the merge entry, absent on the checked-out branch
+(its row and its unified pill alike) — the reasons (already checked out, default
+branch, remote only, HEAD already detached here, no full hash; for the merge a
+remote-only ref, a detached HEAD and HEAD outside the window, each labelled
+"Merge x into current branch"), the "Merge x into main" label, the row/pill
+section order, the checkout statement's warnings, and the merge wording (the
+`--no-ff`/`--ff-only` commands, the blocked reasons, the fast-forward reason,
+the conflict heading). DOM tests cover `GitActionMenu`
 (unwired handlers render disabled with a reason, a checkout is only *requested*,
 links, the arrow/Home/End/Enter/Escape contract and that handled keys never reach
 the host's shortcuts, copy via a stubbed Clipboard API), `ConfirmActionDialog`
 (the statement before anything runs, stderr verbatim, buttons inert but focusable
-while git runs), and `CommitGraph`'s context-menu seam (row vs pill request,
+while git runs), `ConfirmMergeDialog` (Fast Forward unchecked by default and
+running `--no-ff`, checked running `--ff-only`, disabled with its reason where a
+fast-forward is not possible; uncommitted changes, nothing to merge, and a
+loading preview blocking the confirm with the reason; a conflict shown as aborted
+with git's output verbatim), the merge entry in `GitActionMenu` (only requested,
+absent on the checked-out branch, disabled with a reason when unwired), and
+`CommitGraph`'s context-menu seam (row vs pill request,
 browser menu suppressed only over rows and pills and only when a handler is
 wired, Shift+F10 / the context-menu key). The `git show`/`git diff` parsers
 (`commitDetail.ts`, `fileDiff.ts`) and the route membership guards — path *and*
@@ -523,7 +603,7 @@ that handled keys never reach a window listener. `src/lib/graphView.test.tsx`
 pins the switch: Commits by default, the choice and the tags toggle surviving a
 remount through `localStorage`, a stored value that fails validation falling
 back, and Tags as rows disabled with its reason in the Commits view.
-Currently 395 tests across 30 files.
+Currently 434 tests across 31 files.
 
 ## UX conventions
 
@@ -571,6 +651,22 @@ Currently 395 tests across 30 files.
   and refetches. A detaching checkout (tag or commit) always carries the
   detached-HEAD warning. Remote-only refs offer checkout disabled-with-reason
   (tracking-branch creation is not in this slice).
+- Merge from the context menu (issue #2): a local branch's menu reads "Merge x
+  into main" — the label names both branches. The checked-out branch itself has
+  **no merge entry**: the operator's explicit exception to ADR-0025 and to the
+  descriptor's "no entry ever missing" rule, for this one entry (issue #2's
+  acceptance criterion had named it visible-disabled; the operator's decision
+  overrides it). Everywhere else the rule holds: a remote-only ref keeps the
+  entry disabled with its reason, and a detached HEAD or HEAD outside the loaded
+  window keeps it disabled, labelled "Merge x into current branch". Tags and
+  commits get none. The host shows `ConfirmMergeDialog`: a `--no-ff` merge
+  commit with git's default message (never shown, never edited) by default; a
+  **Fast Forward** checkbox, unchecked by default, for `--ff-only`, disabled
+  with its reason when git's ancestry rules a fast-forward out. Uncommitted
+  tracked changes block the merge (confirm `aria-disabled`, reason on screen,
+  the files named), as do nothing to merge and a moved HEAD; the server refuses
+  all of them again. A conflict is aborted and shown with git's output verbatim.
+  Success refetches like a checkout. Nothing is pushed.
 - ADR-0016: no third-party runtime assets — everything is bundled.
 - ADR-0022: Tabler vectors, never emoji.
 - ADR-0018 / ADR-0037: dynamic port allocation runs in front of the strict bind

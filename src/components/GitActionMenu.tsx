@@ -6,12 +6,14 @@ import {
   IconGitBranch,
   IconGitCommit,
   IconGitCompare,
+  IconGitMerge,
   IconTag,
 } from '@tabler/icons-react'
-import type { CheckoutTarget, GitCommit } from '../../shared/git.schema'
+import type { CheckoutTarget, GitCommit, MergeTarget } from '../../shared/git.schema'
 import {
   buildGitMenuSections,
   checkoutTargetForEntry,
+  mergeTargetForEntry,
   type GitActionId,
   type GitMenuEntry,
   type GitMenuInput,
@@ -45,6 +47,12 @@ export type GitActionMenuProps = {
    * Absent → every checkout entry is disabled with a reason.
    */
   onCheckout?: (target: CheckoutTarget) => void
+  /**
+   * Merge a branch into the checked-out branch. Like a checkout, only
+   * *requested*: the host confirms first (`ConfirmMergeDialog`). Absent → every
+   * merge entry is disabled with a reason.
+   */
+  onMerge?: (target: MergeTarget) => void
   /** The `/commit` diff-tab URL for a commit. Absent or null → "Open commit" is disabled. */
   buildCommitHref?: (commit: GitCommit) => string | null
   /** The `/compare` URL for a branch against the default. Absent or null → "Compare" is disabled. */
@@ -62,6 +70,7 @@ const ACTION_ICONS: Record<GitActionId, ReactNode> = {
   'open-commit': <IconExternalLink size={ICON_SIZE} aria-hidden />,
   'checkout-branch': <IconGitBranch size={ICON_SIZE} aria-hidden />,
   'compare-branch': <IconGitCompare size={ICON_SIZE} aria-hidden />,
+  'merge-branch': <IconGitMerge size={ICON_SIZE} aria-hidden />,
   'checkout-tag': <IconTag size={ICON_SIZE} aria-hidden />,
 }
 
@@ -78,13 +87,17 @@ type ResolvedEntry = {
   run: (() => void) | null
 }
 
-const notOfferedHere = (entry: GitMenuEntry) => `${entry.label.toLowerCase()} is not offered in this view`
+// Only the first letter is lowered: the label can carry branch names and HEAD,
+// which keep their case.
+const notOfferedHere = (entry: GitMenuEntry) =>
+  `${entry.label.charAt(0).toLowerCase()}${entry.label.slice(1)} is not offered in this view`
 
 export function GitActionMenu({
   input,
   anchor,
   onClose,
   onCheckout,
+  onMerge,
   buildCommitHref,
   buildCompareHref,
   onNotice,
@@ -111,6 +124,12 @@ export function GitActionMenu({
     if (checkoutTarget !== null) {
       if (!onCheckout) return unavailable(notOfferedHere(entry))
       return { entry, disabledReason: null, href: null, run: () => onCheckout(checkoutTarget) }
+    }
+
+    const mergeTarget = mergeTargetForEntry(entry, input.head)
+    if (mergeTarget !== null) {
+      if (!onMerge) return unavailable(notOfferedHere(entry))
+      return { entry, disabledReason: null, href: null, run: () => onMerge(mergeTarget) }
     }
 
     switch (entry.action) {

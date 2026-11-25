@@ -9,6 +9,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **"Merge x into main" from the git-action context menu — the second write.**
+  A local branch's menu (on its pill, or in a row's menu, a unified `main │
+  origin` pill included) offers "Merge x into <checked-out branch>". It runs only
+  after a confirm dialog that states the command and the repository. By default
+  the merge is `git merge --no-ff --no-edit`: always a merge commit with git's
+  default message, never shown or edited. The dialog's **Fast Forward** option is
+  unchecked by default and runs `git merge --ff-only`; it is disabled, with its
+  reason, when git's ancestry says a fast-forward is not possible. Uncommitted
+  changes to tracked files (staged or not) block the merge, with the confirm
+  disabled and the files named; untracked files do not block. A branch the
+  checked-out one already contains is not merged. A merge that conflicts is
+  undone with `git merge --abort`, and the dialog shows that it was aborted with
+  git's output verbatim; if the abort fails, the dialog says the repository is
+  still mid-merge. Nothing is pushed. After success the graph and every open view
+  refetch, and git's one-line report shows in the status strip. The checked-out
+  branch has no merge entry at all: the operator's exception to ADR-0025 for this
+  one entry. A remote-only ref keeps the entry disabled with its reason, and so
+  does every branch while `HEAD` is detached or outside the loaded window
+  ("Merge x into current branch"). Tags and commits get no merge entry.
+  `GET /api/git/merge/preview` reports what a merge would meet (the checked-out
+  branch, whether it already contains the branch, whether a fast-forward is
+  possible, the uncommitted tracked files, a merge in progress). `POST
+  /api/git/merge` makes every check again: the branch by membership against
+  `refs/heads`, and `HEAD` still on the branch the request names (`into`), so a
+  merge chosen against a stale graph is refused with `HEAD` untouched. It sits
+  behind the checkout's guards (the `X-Git-Graph-Action` header, the JSON body,
+  the Origin and `Sec-Fetch-Site` checks, the Host guard, the embedding-origin
+  CORS). Its error body carries `reason` and `gitOutput` beside `error`.
+  `ConfirmMergeDialog` is a new fetch-free barrel component; `GitActionMenu`
+  gains `onMerge` (unwired → the entry is disabled with a reason), and
+  `ConfirmActionDialog` gains `blockedReason`, `errorHeading` and an options
+  slot. The wording (`describeMerge`, `mergeBlockedReason`,
+  `fastForwardUnavailableReason`, `describeMergeFailure`) lives in
+  `git-graph/shared`. ([#2])
+
 - **A Branches view (concept "git-graph: Branch-Ansicht", variant A2 "Nur
   Refs").** The header has a **Branches | Commits** switch. Commits is the
   existing graph and stays the default. Branches shows one row per ref and draws

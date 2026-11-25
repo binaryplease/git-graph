@@ -100,6 +100,27 @@ describe('GitActionMenu', () => {
     expect(onCheckout).toHaveBeenLastCalledWith({ kind: 'commit', hash: FULL_HASH })
   })
 
+  test('a merge entry names both branches, only requests the merge, and is absent on the checked-out branch', () => {
+    const onMerge = mock(() => {})
+    const { onClose } = renderMenu({ onMerge })
+    // `main` is checked out on this row: its section has no merge entry at all.
+    expect(
+      [...screen.getByRole('group', { name: 'branch main' }).querySelectorAll('[role="menuitem"]')].map(
+        (element) => element.textContent,
+      ),
+    ).toEqual(['Checkout branch', 'Compare against the default branch'])
+    fireEvent.click(item('Merge feature into main', 'branch feature'))
+    expect(onMerge).toHaveBeenCalledWith({ branch: 'feature', into: 'main' })
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  test('a host that wires no merge handler gets the merge entry disabled with a reason', () => {
+    renderMenu()
+    const entry = item('Merge feature into main', 'branch feature')
+    expect(entry.getAttribute('aria-disabled')).toBe('true')
+    expect(entry.getAttribute('title')).toBe('merge feature into main is not offered in this view')
+  })
+
   test('open-commit and compare are links built by the host, opening a new tab', () => {
     renderMenu({
       buildCommitHref: (target) => `/commit?hash=${target.hash}`,

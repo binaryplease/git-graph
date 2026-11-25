@@ -9,6 +9,7 @@ import {
   type ReadCompareFailureReason,
   type ReadCompareFileDiffFailureReason,
   type ReadFileDiffFailureReason,
+  type ReadMergePreviewFailureReason,
   type ReadWorkingFileDiffFailureReason,
   type ReadWorkingTreeFailureReason,
 } from '../services/git'
@@ -27,6 +28,12 @@ import {
   FileDiffQuerySchema,
   FileDiffSchema,
   GitErrorSchema,
+  MergeErrorSchema,
+  MergePreviewQuerySchema,
+  MergePreviewSchema,
+  MergeRequestSchema,
+  MergeResultSchema,
+  type MergeFailureReason,
   RepositoryListSchema,
   WorkingFileDiffQuerySchema,
   WorkingTreeQuerySchema,
@@ -165,6 +172,53 @@ function checkoutFailureStatusAndMessage(
       return { statusCode: 409, message: detail || 'git refused the checkout' }
     case 'git-failed':
       return { statusCode: 500, message: `git failed: ${detail || 'unknown error'}` }
+  }
+}
+
+function mergePreviewFailureStatusAndMessage(
+  reason: ReadMergePreviewFailureReason,
+  repositoryIdentifier: string,
+  detail?: string,
+): { statusCode: 404 | 500; message: string } {
+  switch (reason) {
+    case 'unknown-repository':
+      return {
+        statusCode: 404,
+        message: `no such repository among those served: ${repositoryIdentifier || '(root)'}`,
+      }
+    case 'unknown-ref':
+      return { statusCode: 404, message: detail || 'no such branch in this repository' }
+    case 'git-failed':
+      return { statusCode: 500, message: `git failed: ${detail || 'unknown error'}` }
+  }
+}
+
+/** The status a merge failure answers with; the body always names the reason. */
+function mergeFailureStatus(reason: MergeFailureReason): 404 | 409 | 500 {
+  switch (reason) {
+    case 'unknown-repository':
+    case 'unknown-ref':
+      return 404
+    // The repository is still mid-merge, or git failed outright: a server-side
+    // state the user must act on, not a refusal of this request.
+    case 'abort-failed':
+    case 'git-failed':
+      return 500
+    default:
+      return 409
+  }
+}
+
+function mergeFailureMessage(reason: MergeFailureReason, repositoryIdentifier: string, detail?: string): string {
+  switch (reason) {
+    case 'unknown-repository':
+      return `no such repository among those served: ${repositoryIdentifier || '(root)'}`
+    case 'unknown-ref':
+      return detail || 'no such branch in this repository'
+    case 'git-failed':
+      return `git failed: ${detail || 'unknown error'}`
+    default:
+      return detail || 'git refused the merge'
   }
 }
 
@@ -490,6 +544,80 @@ export const gitRoutes = new Elysia()
           'stderr. The request must carry the `X-Git-Graph-Action: 1` header and a JSON body, and a browser ' +
           'request marked cross-site, or whose `Origin` names a host the server does not answer for, is ' +
           'refused with 403, so a foreign web page cannot trigger it.',
+      },
+    },
+  )
+  .get(
+    '/api/git/merge/preview',
+    async ({ query, status }) => {
+      const result = await gitService.readMergePreview(query.repo, query.branch)
+      if (!result.ok) {
+        const { statusCode, message } = mergePreviewFailureStatusAndMessage(result.reason, query.repo, result.detail)
+        return status(statusCode, { error: message })
+      }
+      return result.preview
+    },
+    {
+      query: MergePreviewQuerySchema,
+      response: {
+        200: MergePreviewSchema,
+        404: GitErrorSchema,
+        500: GitErrorSchema,
+      },
+      detail: {
+        tags: ['git'],
+        summary: 'Check what a merge into the checked-out branch would meet',
+        description:
+          'Read-only. For a local branch (validated by membership against `refs/heads`; unknown → 404), ' +
+          'reports the branch checked out right now, whether it already contains the branch, whether a ' +
+          'fast-forward is possible (from git’s own ancestry, not a loaded window), the tracked files with ' +
+          'uncommitted changes, and whether a merge is already in progress. The confirm step reads it before ' +
+          '`POST /api/git/merge`; the merge route makes every one of these checks again itself.',
+      },
+    },
+  )
+  // The second mutating route: the checkout's guards (membership, the
+  // cross-origin gate) plus a staleness check on the branch HEAD is on.
+  .post(
+    '/api/git/merge',
+    async ({ body, status }) => {
+      const outcome = await gitService.merge(body.repo, body)
+      if (!outcome.ok) {
+        return status(mergeFailureStatus(outcome.reason), {
+          error: mergeFailureMessage(outcome.reason, body.repo, outcome.detail),
+          reason: outcome.reason,
+          gitOutput: outcome.gitOutput ?? '',
+        })
+      }
+      return outcome.result
+    },
+    {
+      body: MergeRequestSchema,
+      beforeHandle({ request, status }) {
+        const verdict = checkMutationRequest(request.headers, { additionalAllowedHosts, allowedOrigins })
+        if (!verdict.ok) return status(403, { error: verdict.reason })
+      },
+      response: {
+        200: MergeResultSchema,
+        403: GitErrorSchema,
+        404: MergeErrorSchema,
+        409: MergeErrorSchema,
+        500: MergeErrorSchema,
+      },
+      detail: {
+        tags: ['git'],
+        summary: 'Merge a local branch into the checked-out branch',
+        description:
+          'Changes the repository on disk: `git merge --no-ff --no-edit` (a merge commit with git’s default ' +
+          'message, the default) or, with `fastForward: true`, `git merge --ff-only`. Nothing is pushed. The ' +
+          'branch is validated by membership against `refs/heads` (unknown → 404). Refused with 409 before git ' +
+          'runs, HEAD untouched: HEAD is not on `into` (a stale view), a merge is in progress, tracked files ' +
+          'have uncommitted changes, `into` already contains the branch, or a fast-forward was asked for and ' +
+          'is not possible. A merge git refuses is a 409 with git’s output verbatim. A conflict is undone with ' +
+          '`git merge --abort` and answered 409 `conflict-aborted` with git’s output (the conflicting paths); ' +
+          'if the abort fails too, 500 `abort-failed` says the repository is still mid-merge. The request must ' +
+          'carry the `X-Git-Graph-Action: 1` header and a JSON body; a browser request marked cross-site, or ' +
+          'whose `Origin` names a host the server does not answer for, is refused with 403.',
       },
     },
   )
