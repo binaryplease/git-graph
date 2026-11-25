@@ -1150,6 +1150,81 @@ describe('merge', () => {
     expect(fixture.repositoryState()).toEqual(detached)
   })
 
+  // NST18837 finding 1: the checks examine `refs/heads/<branch>`, so the merge
+  // must bring in exactly that commit. git resolves a short name through
+  // `.git/<name>`, `refs/<name>` and `refs/tags/<name>` before `refs/heads/`.
+  describe('merges the branch the listing names, never another ref of the same short name', () => {
+    const secondParent = (fixture: ReturnType<typeof createMergeFixture>) => fixture.read('log', '-1', '--format=%P').split(' ')[1]
+
+    test('a same-named tag on another commit (one a plain fetch can bring in)', async () => {
+      const fixture = createMergeFixture()
+      fixture.read('tag', 'ahead', 'diverged')
+      const outcome = await merge(fixture.repositoryName, 'ahead')
+      if (!outcome.ok) throw new Error(`expected ok, got ${outcome.reason}: ${outcome.detail}`)
+      expect(secondParent(fixture)).toBe(fixture.fullHashOf('refs/heads/ahead'))
+      expect(fixture.read('log', '-1', '--format=%B')).toBe("Merge branch 'ahead'")
+    })
+
+    test('a same-named tag on a descendant does not hijack a fast-forward', async () => {
+      const fixture = createMergeFixture()
+      fixture.read('tag', 'ahead', 'fresh')
+      const outcome = await merge(fixture.repositoryName, 'ahead', { fastForward: true })
+      if (!outcome.ok) throw new Error(`expected ok, got ${outcome.reason}: ${outcome.detail}`)
+      expect(fixture.headHash()).toBe(fixture.fullHashOf('refs/heads/ahead'))
+    })
+
+    test('a local branch named remotes/origin/feature beside a real remote-tracking ref', async () => {
+      const fixture = createMergeFixture()
+      fixture.read('branch', 'remotes/origin/feature', 'ahead')
+      fixture.read('update-ref', 'refs/remotes/origin/feature', 'diverged')
+      const outcome = await merge(fixture.repositoryName, 'remotes/origin/feature')
+      if (!outcome.ok) throw new Error(`expected ok, got ${outcome.reason}: ${outcome.detail}`)
+      expect(secondParent(fixture)).toBe(fixture.fullHashOf('refs/heads/remotes/origin/feature'))
+      expect(fixture.read('log', '-1', '--format=%B')).toBe("Merge branch 'remotes/origin/feature'")
+    })
+
+    test('a local branch named FETCH_HEAD while .git/FETCH_HEAD names another commit', async () => {
+      const fixture = createMergeFixture()
+      fixture.read('branch', 'FETCH_HEAD', 'ahead')
+      writeFileSync(join(fixture.repositoryPath, '.git', 'FETCH_HEAD'), `${fixture.fullHashOf('diverged')}\t\tbranch 'x' of elsewhere\n`)
+      const outcome = await merge(fixture.repositoryName, 'FETCH_HEAD')
+      if (!outcome.ok) throw new Error(`expected ok, got ${outcome.reason}: ${outcome.detail}`)
+      expect(secondParent(fixture)).toBe(fixture.fullHashOf('refs/heads/FETCH_HEAD'))
+    })
+
+    test('off main, the message stays git’s default, naming the branch merged into', async () => {
+      const fixture = createMergeFixture()
+      fixture.read('switch', 'diverged')
+      const outcome = await merge(fixture.repositoryName, 'ahead', { into: 'diverged' })
+      if (!outcome.ok) throw new Error(`expected ok, got ${outcome.reason}: ${outcome.detail}`)
+      expect(fixture.read('log', '-1', '--format=%B')).toBe("Merge branch 'ahead' into diverged")
+    })
+  })
+
+  // NST18837 finding 4: `rev-parse --verify MERGE_HEAD` also resolves a branch.
+  test('a local branch named MERGE_HEAD is not a merge in progress', async () => {
+    const fixture = createMergeFixture()
+    fixture.read('branch', 'MERGE_HEAD', 'merged')
+    expect(await service().readMergePreview(fixture.repositoryName, 'ahead')).toMatchObject({
+      ok: true,
+      preview: { mergeInProgress: false },
+    })
+    expect((await merge(fixture.repositoryName, 'ahead')).ok).toBe(true)
+  })
+
+  // NST18836 finding 2: a hook refusing the merge commit leaves MERGE_HEAD but no
+  // conflict; it is undone and reads as git's refusal, not as a conflict.
+  test('a pre-merge-commit hook refusal is undone and reported as a refusal, not a conflict', async () => {
+    const fixture = createMergeFixture()
+    const hookPath = join(fixture.repositoryPath, '.git', 'hooks', 'pre-merge-commit')
+    writeFileSync(hookPath, '#!/bin/sh\necho "hook says no" >&2\nexit 1\n', { mode: 0o755 })
+    const before = fixture.repositoryState()
+    const outcome = await merge(fixture.repositoryName, 'ahead')
+    expect(outcome).toMatchObject({ ok: false, reason: 'merge-refused' })
+    if (!outcome.ok) expect(outcome.gitOutput).toContain('hook says no')
+    expect(fixture.repositoryState()).toEqual(before)
+  })
+
   test('the preview reports what the merge would meet, from git’s own ancestry', async () => {
     const fixture = createMergeFixture()
     const previewOf = async (branch: string) => {

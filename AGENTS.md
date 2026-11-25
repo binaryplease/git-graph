@@ -172,9 +172,16 @@ consumers (standalone instance · shared package · nightshift-ui module):
     always a full `refs/tags/…` refname or a full hash, `advice.detachedHead=false`
     so git's report is one line.
   - `merge.ts` — `git merge` argument shapes for a resolved merge: `--no-ff
-    --no-edit` (git's default message, never an editor) or `--ff-only`, the
-    branch after `--end-of-options` as the short name the listing gave (so the
-    default message reads `Merge branch 'x'`), `advice.diverging=false`; the
+    --no-edit -m <message>` or `--ff-only`, always on the **full hash**
+    `refs/heads/<branch>` resolved to, after `--end-of-options`. Never the short
+    name: git resolves a short name through `.git/<name>`, `refs/<name>` and
+    `refs/tags/<name>` before `refs/heads/<name>`, so a same-named tag a plain
+    fetch can bring in, a branch called `FETCH_HEAD`, or one called
+    `remotes/origin/x` would merge another commit than the one checked
+    (NST18837). The message is git's own default, built by the `git
+    fmt-merge-msg` step `git merge <branch>` runs (`mergeMessageInput` →
+    `Merge branch 'x'`, `… into y` off main, the operator's `merge.log` /
+    `merge.suppressDest` applied); `advice.diverging=false`; the
     `git merge --abort` and tracked-changes (`git diff --name-only -z HEAD`)
     argument lists; `mergeReport` (git's one-line report); and the
     uncommitted-changes wording the server and the dialog share.
@@ -233,14 +240,18 @@ consumers (standalone instance · shared package · nightshift-ui module):
     `inspectMerge`) resolves the branch against `for-each-ref refs/heads` and
     refuses, before git runs and with HEAD untouched: HEAD not on the `into`
     branch the request names (`stale-head` — the client's view can be stale), a
-    merge in progress (`MERGE_HEAD`), tracked changes against HEAD staged or not
+    merge in progress (the `MERGE_HEAD` *file*, at `rev-parse --git-path` —
+    `rev-parse --verify MERGE_HEAD` would also resolve a branch of that name),
+    tracked changes against HEAD staged or not
     (`uncommitted-changes`; untracked files do not block), a branch HEAD already
     contains (`nothing-to-merge`), and a fast-forward asked for where HEAD is not
     an ancestor (`fast-forward-impossible`) — ancestry is git's
     `merge-base --is-ancestor`, never the client's window. git's own refusal is
-    `merge-refused` with its output verbatim; a conflict (the only failure that
-    leaves `MERGE_HEAD`) is undone with `git merge --abort` and answered
-    `conflict-aborted` with git's output, and an abort that fails is
+    `merge-refused` with its output verbatim; a merge that stopped part-way
+    (`MERGE_HEAD` left) is undone with `git merge --abort` — answered
+    `conflict-aborted` with git's output when `ls-files --unmerged` lists
+    conflicts, `merge-refused` when a hook refused the merge commit — and an
+    abort that fails is
     `abort-failed` (500), never reported clean. Every failure body is a
     `MergeError` (`error`, `reason`, `gitOutput`). Nothing is pushed or fetched.
     In front of both writes, `services/mutation-guard.ts` (its own
@@ -452,7 +463,13 @@ and tree intact; an untracked file not blocking, and one the merge would
 overwrite coming back as git's refusal verbatim; a conflict aborted with HEAD,
 index and tree as before and git's `CONFLICT` line kept; nothing to merge
 refused; unknown, remote-only, tag, option- and revision-shaped branch names
-refused before git runs; a stale `into` (another branch, a detached HEAD)
+refused before git runs; the listed branch merged and never another ref of its
+short name (a same-named tag, also under `--ff-only`; a local
+`remotes/origin/feature` beside a real remote-tracking ref; a local `FETCH_HEAD`
+while `.git/FETCH_HEAD` names another commit); git's default message off main
+(`Merge branch 'ahead' into diverged`); a local branch named `MERGE_HEAD` not
+read as a merge in progress; a `pre-merge-commit` hook refusal undone and
+reported as `merge-refused`; a stale `into` (another branch, a detached HEAD)
 refused; the preview's fields from git's ancestry; and a repository outside the
 served set refused.
 The served set is pinned in `services/repository-set.test.ts` (the file parser:
@@ -582,7 +599,7 @@ that handled keys never reach a window listener. `src/lib/graphView.test.tsx`
 pins the switch: Commits by default, the choice and the tags toggle surviving a
 remount through `localStorage`, a stored value that fails validation falling
 back, and Tags as rows disabled with its reason in the Commits view.
-Currently 426 tests across 31 files.
+Currently 433 tests across 31 files.
 
 ## UX conventions
 

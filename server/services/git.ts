@@ -1,4 +1,4 @@
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { COMMIT_LOG_ARGUMENTS, parseGitLog } from '../../shared/gitLog'
 import {
   COMMIT_DETAIL_ARGUMENTS,
@@ -29,8 +29,10 @@ import type { RepositorySet, ServedRepository } from './repository-set'
 import { checkoutArguments, type ResolvedCheckout } from '../../shared/checkout'
 import {
   MERGE_ABORT_ARGUMENTS,
+  MERGE_MESSAGE_ARGUMENTS,
   TRACKED_CHANGES_ARGUMENTS,
   mergeArguments,
+  mergeMessageInput,
   mergeReport,
   uncommittedChangesReason,
 } from '../../shared/merge'
@@ -170,8 +172,9 @@ export function createGitService({ repositories: repositorySet }: { repositories
   }
 
   /** Run git in a resolved repository and collect its output. */
-  async function runGit(repositoryPath: string, gitArguments: string[]) {
+  async function runGit(repositoryPath: string, gitArguments: string[], { input }: { input?: string } = {}) {
     const gitProcess = Bun.spawn(['git', '-C', repositoryPath, ...gitArguments], {
+      stdin: input === undefined ? 'ignore' : new TextEncoder().encode(input),
       stdout: 'pipe',
       stderr: 'pipe',
     })
@@ -952,6 +955,18 @@ export function createGitService({ repositories: repositorySet }: { repositories
    * reaches git. Ancestry is git's own (`merge-base --is-ancestor`), so the
    * answer never depends on how much history the client happened to load.
    */
+  /**
+   * True when the repository is mid-merge: the `MERGE_HEAD` file exists. Read
+   * as a file at the path git names for it, because `rev-parse --verify
+   * MERGE_HEAD` also resolves a local *branch* called `MERGE_HEAD`.
+   */
+  async function isMidMerge(repositoryPath: string): Promise<boolean> {
+    const located = await runGit(repositoryPath, ['rev-parse', '--git-path', 'MERGE_HEAD'])
+    if (located.exitCode !== 0) return false
+    const mergeHeadPath = located.stdout.trim()
+    return Bun.file(isAbsolute(mergeHeadPath) ? mergeHeadPath : join(repositoryPath, mergeHeadPath)).exists()
+  }
+
   async function inspectMerge(repositoryPath: string, branchName: string) {
     const data = await readBranchData(repositoryPath)
     if (!data.ok) return { ok: false as const, reason: 'git-failed' as const, detail: data.detail }
@@ -960,12 +975,26 @@ export function createGitService({ repositories: repositorySet }: { repositories
       return { ok: false as const, reason: 'unknown-ref' as const, detail: `no such branch: ${branchName}` }
     }
 
-    const branchRef = `${LOCAL_BRANCH_PREFIX}${branch}`
-    const [mergeHead, trackedChanges, branchInHead, headInBranch] = await Promise.all([
-      runGit(repositoryPath, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']),
+    // Every check below, and the merge itself, names this hash: the commit the
+    // full refname pointed at now. The short name would let git resolve a
+    // same-named tag, `.git/<name>` or `refs/<name>` first (see ResolvedMerge).
+    const resolved = await runGit(repositoryPath, [
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      '--end-of-options',
+      `${LOCAL_BRANCH_PREFIX}${branch}^{commit}`,
+    ])
+    const commitHash = resolved.stdout.trim()
+    if (resolved.exitCode !== 0 || commitHash === '') {
+      return { ok: false as const, reason: 'git-failed' as const, detail: `could not resolve the branch ${branch}` }
+    }
+
+    const [mergeInProgress, trackedChanges, branchInHead, headInBranch] = await Promise.all([
+      isMidMerge(repositoryPath),
       runGit(repositoryPath, [...TRACKED_CHANGES_ARGUMENTS]),
-      runGit(repositoryPath, ['merge-base', '--is-ancestor', branchRef, 'HEAD']),
-      runGit(repositoryPath, ['merge-base', '--is-ancestor', 'HEAD', branchRef]),
+      runGit(repositoryPath, ['merge-base', '--is-ancestor', commitHash, 'HEAD']),
+      runGit(repositoryPath, ['merge-base', '--is-ancestor', 'HEAD', commitHash]),
     ])
     // `--is-ancestor` answers with 0 (yes) or 1 (no); anything else is git failing.
     const ancestryFailure = [branchInHead, headInBranch].find((result) => result.exitCode > 1)
@@ -977,13 +1006,14 @@ export function createGitService({ repositories: repositorySet }: { repositories
     const alreadyMerged = branchInHead.exitCode === 0
     return {
       ok: true as const,
+      commitHash,
       state: {
         branch,
         into: data.currentBranch,
         alreadyMerged,
         canFastForward: !alreadyMerged && headInBranch.exitCode === 0,
         uncommittedFiles: trackedChanges.stdout.split('\0').filter((path) => path.length > 0),
-        mergeInProgress: mergeHead.exitCode === 0,
+        mergeInProgress,
       },
     }
   }
@@ -1050,15 +1080,28 @@ export function createGitService({ repositories: repositorySet }: { repositories
       }
     }
 
-    const merged = await runGit(repositoryPath, mergeArguments({ branch, fastForward: request.fastForward }))
+    // git's own default message for this branch, built by the same
+    // `fmt-merge-msg` step `git merge <branch>` runs, since the merge names a hash.
+    const { commitHash } = inspected
+    const formatted = request.fastForward
+      ? null
+      : await runGit(repositoryPath, [...MERGE_MESSAGE_ARGUMENTS], { input: mergeMessageInput(commitHash, branch) })
+    if (formatted !== null && (formatted.exitCode !== 0 || formatted.stdout.trim() === '')) {
+      return { ok: false, reason: 'git-failed', detail: formatted.stderr.trim() || 'git fmt-merge-msg printed no message' }
+    }
+    const message = formatted?.stdout.trim() ?? ''
+
+    const merged = await runGit(repositoryPath, mergeArguments({ commitHash, fastForward: request.fastForward, message }))
     if (merged.exitCode !== 0) {
       const gitOutput = combinedOutput(merged)
-      // A conflict is the one failure that leaves the repository mid-merge;
-      // every other refusal stops before git writes MERGE_HEAD.
-      const midMerge = await runGit(repositoryPath, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'])
-      if (midMerge.exitCode !== 0) {
+      // A merge git refuses outright stops before it writes MERGE_HEAD; one that
+      // stopped part-way (a conflict, or a hook refusing the merge commit) leaves
+      // it, and is undone below.
+      if (!(await isMidMerge(repositoryPath))) {
         return { ok: false, reason: 'merge-refused', detail: gitOutput || 'git refused the merge', gitOutput }
       }
+      const unmerged = await runGit(repositoryPath, ['ls-files', '--unmerged'])
+      const hasConflicts = unmerged.exitCode === 0 && unmerged.stdout.trim() !== ''
       const aborted = await runGit(repositoryPath, [...MERGE_ABORT_ARGUMENTS])
       if (aborted.exitCode !== 0) {
         const bothOutputs = `${gitOutput}\n\n${combinedOutput(aborted)}`
@@ -1069,6 +1112,16 @@ export function createGitService({ repositories: repositorySet }: { repositories
             `Merging ${branch} into ${into} conflicted, and git merge --abort failed: the repository is still ` +
             `mid-merge — resolve or abort it by hand.\n\n${bothOutputs}`,
           gitOutput: bothOutputs,
+        }
+      }
+      // No unmerged paths: git stopped for another reason (a hook refused the
+      // merge commit). It is undone all the same, and reads as git's refusal.
+      if (!hasConflicts) {
+        return {
+          ok: false,
+          reason: 'merge-refused',
+          detail: `${gitOutput || 'git refused the merge'}\n\n(git merge --abort was run: HEAD, the index and the working tree are as they were.)`,
+          gitOutput,
         }
       }
       return {

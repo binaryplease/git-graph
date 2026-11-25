@@ -12,31 +12,53 @@ const MERGE_CONFIG_ARGUMENTS = ['-c', 'advice.diverging=false'] as const
 
 /** What the service has already resolved and validated a merge into. */
 export type ResolvedMerge = {
-  /** The local branch to merge, exactly as `for-each-ref refs/heads` listed it. */
-  branch: string
+  /**
+   * The full hash `refs/heads/<branch>` pointed at when the checks ran. The
+   * merge names this hash, never the short branch name: git resolves a short
+   * name through `.git/<name>`, `refs/<name>` and `refs/tags/<name>` before
+   * `refs/heads/<name>`, so a same-named tag (one a plain fetch can bring in), a
+   * branch called `FETCH_HEAD`, or one called `remotes/origin/x` would merge a
+   * different commit than the one the checks and the dialog described.
+   */
+  commitHash: string
   /** True for a fast-forward and only a fast-forward; false for a `--no-ff` merge commit. */
   fastForward: boolean
+  /**
+   * git's default message for merging the branch, from {@link mergeMessageInput}
+   * through `git fmt-merge-msg` — what `git merge <branch>` would have written.
+   * Unused by a fast-forward, which creates no commit.
+   */
+  message: string
 }
 
 /**
  * The argument list that performs a resolved merge. `--no-ff` creates a merge
  * commit even when a fast-forward would be possible; `--ff-only` moves the
- * branch forward or refuses. `--no-edit` takes git's default merge message and
- * never opens an editor, so the request never waits on one. The branch goes
- * after `--end-of-options`, so it can never read as an option, and as the short
- * name the listing gave, so git's default message reads `Merge branch 'x'`
- * rather than naming the full refname.
+ * branch forward or refuses. The message is passed with `-m` and `--no-edit`
+ * keeps the editor closed, so the request never waits on one. The commit goes
+ * after `--end-of-options`, so it can never read as an option.
  */
 export function mergeArguments(merge: ResolvedMerge): string[] {
   return [
     ...MERGE_CONFIG_ARGUMENTS,
     'merge',
-    merge.fastForward ? '--ff-only' : '--no-ff',
+    ...(merge.fastForward ? ['--ff-only'] : ['--no-ff', '-m', merge.message]),
     '--no-edit',
     '--end-of-options',
-    merge.branch,
+    merge.commitHash,
   ]
 }
+
+/** Builds git's default merge message from {@link mergeMessageInput} on stdin. */
+export const MERGE_MESSAGE_ARGUMENTS = ['fmt-merge-msg'] as const
+
+/**
+ * The line `git merge <branch>` itself hands `git fmt-merge-msg` for a local
+ * branch, so the message for the hash names the branch exactly as git's default
+ * would (`Merge branch 'x'`, `Merge branch 'x' into y`), with the operator's
+ * `merge.log` / `merge.suppressDest` settings applied by git.
+ */
+export const mergeMessageInput = (commitHash: string, branch: string) => `${commitHash}\t\tbranch '${branch}' of .\n`
 
 /** Undoes a merge that stopped on a conflict: HEAD, the index and the tree go back to before it. */
 export const MERGE_ABORT_ARGUMENTS = ['merge', '--abort'] as const

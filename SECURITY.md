@@ -35,6 +35,12 @@ vulnerabilities:
 - **A configured embedding origin reads, checks out and merges like the git-graph
   page itself.** Naming an origin in `GIT_GRAPH_ALLOWED_ORIGINS` grants that page
   CORS reads and both writes; that is the point of the setting.
+- **Repository hooks run on a write, by design.** A checkout runs
+  `post-checkout`, and a merge runs `pre-merge-commit`, `prepare-commit-msg`,
+  `commit-msg` and `post-merge`, as the same commands would in a terminal. Hooks
+  come from `.git/hooks` or `core.hooksPath`, both local configuration the
+  operator controls, so they are trusted like the rest of that configuration; a
+  hook that refuses a merge leaves the repository restored (`git merge --abort`).
 
 What **is** in scope:
 
