@@ -172,7 +172,7 @@ consumers (standalone instance · shared package · nightshift-ui module):
     always a full `refs/tags/…` refname or a full hash, `advice.detachedHead=false`
     so git's report is one line.
   - `merge.ts` — `git merge` argument shapes for a resolved merge: `--no-ff
-    --no-edit -m <message>` or `--ff-only`, always on the **full hash**
+    --no-log --cleanup=strip --no-edit -m <message>` or `--ff-only`, always on the **full hash**
     `refs/heads/<branch>` resolved to, after `--end-of-options`. Never the short
     name: git resolves a short name through `.git/<name>`, `refs/<name>` and
     `refs/tags/<name>` before `refs/heads/<name>`, so a same-named tag a plain
@@ -181,7 +181,10 @@ consumers (standalone instance · shared package · nightshift-ui module):
     (NST18837). The message is git's own default, built by the `git
     fmt-merge-msg` step `git merge <branch>` runs (`mergeMessageInput` →
     `Merge branch 'x'`, `… into y` off main, the operator's `merge.log` /
-    `merge.suppressDest` applied); `advice.diverging=false`; the
+    `merge.suppressDest` applied — `--no-log` keeps git from appending a second
+    shortlog under the bare hash, `--cleanup=strip` drops `fmt-merge-msg`'s
+    `# By`/`# Via` comment lines, as a plain `git merge <branch>` does);
+    `advice.diverging=false`; the
     `git merge --abort` and tracked-changes (`git diff --name-only -z HEAD`)
     argument lists; `mergeReport` (git's one-line report); and the
     uncommitted-changes wording the server and the dialog share.
@@ -467,7 +470,8 @@ refused before git runs; the listed branch merged and never another ref of its
 short name (a same-named tag, also under `--ff-only`; a local
 `remotes/origin/feature` beside a real remote-tracking ref; a local `FETCH_HEAD`
 while `.git/FETCH_HEAD` names another commit); git's default message off main
-(`Merge branch 'ahead' into diverged`); a local branch named `MERGE_HEAD` not
+(`Merge branch 'ahead' into diverged`), and with `merge.log` on identical to what a
+plain `git merge <branch>` writes (one shortlog); a local branch named `MERGE_HEAD` not
 read as a merge in progress; a `pre-merge-commit` hook refusal undone and
 reported as `merge-refused`; a stale `into` (another branch, a detached HEAD)
 refused; the preview's fields from git's ancestry; and a repository outside the
@@ -599,7 +603,7 @@ that handled keys never reach a window listener. `src/lib/graphView.test.tsx`
 pins the switch: Commits by default, the choice and the tags toggle surviving a
 remount through `localStorage`, a stored value that fails validation falling
 back, and Tags as rows disabled with its reason in the Commits view.
-Currently 433 tests across 31 files.
+Currently 434 tests across 31 files.
 
 ## UX conventions
 

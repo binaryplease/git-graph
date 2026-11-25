@@ -1192,6 +1192,20 @@ describe('merge', () => {
       expect(secondParent(fixture)).toBe(fixture.fullHashOf('refs/heads/FETCH_HEAD'))
     })
 
+    // NST18847 R1: with `merge.log` on, the message carries git's shortlog once,
+    // exactly as a plain `git merge <branch>` writes it.
+    test('with merge.log on, the message is the one git merge <branch> writes — one shortlog', async () => {
+      const served = createMergeFixture()
+      const reference = createMergeFixture()
+      for (const fixture of [served, reference]) fixture.read('config', 'merge.log', 'true')
+      const outcome = await merge(served.repositoryName, 'ahead')
+      if (!outcome.ok) throw new Error(`expected ok, got ${outcome.reason}: ${outcome.detail}`)
+      reference.read('merge', '--no-ff', '--no-edit', 'ahead')
+      const message = served.read('log', '-1', '--format=%B')
+      expect(message).toBe(reference.read('log', '-1', '--format=%B'))
+      expect(message).toBe("Merge branch 'ahead'\n\n* ahead:\n  ahead work")
+    })
+
     test('off main, the message stays git’s default, naming the branch merged into', async () => {
       const fixture = createMergeFixture()
       fixture.read('switch', 'diverged')

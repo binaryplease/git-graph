@@ -42,7 +42,12 @@ export function mergeArguments(merge: ResolvedMerge): string[] {
   return [
     ...MERGE_CONFIG_ARGUMENTS,
     'merge',
-    ...(merge.fastForward ? ['--ff-only'] : ['--no-ff', '-m', merge.message]),
+    // `--no-log`: the message already carries the shortlog when the operator's
+    // `merge.log` asks for one (`fmt-merge-msg` applied it); without the flag
+    // git appends a second one, labelled with the bare hash. `--cleanup=strip`
+    // drops the `# By …` / `# Via …` comment lines `fmt-merge-msg` adds for an
+    // editor, as a plain `git merge <branch>` does.
+    ...(merge.fastForward ? ['--ff-only'] : ['--no-ff', '--no-log', '--cleanup=strip', '-m', merge.message]),
     '--no-edit',
     '--end-of-options',
     merge.commitHash,
