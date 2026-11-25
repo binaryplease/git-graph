@@ -9,6 +9,8 @@ import {
   CommitLogSchema,
   CompareSummarySchema,
   FileDiffSchema,
+  MergePreviewSchema,
+  MergeResultSchema,
   RepositoryListSchema,
   WorkingTreeSchema,
   type BranchList,
@@ -18,24 +20,55 @@ import {
   type CommitLog,
   type CompareSummary,
   type FileDiff,
+  type MergePreview,
+  type MergeResult,
+  type MergeTarget,
   type RepositoryList,
   type WorkingTree,
 } from '../../shared/git.schema'
+
+/**
+ * A response that was not 2xx. The message is the server's `error`; the whole
+ * parsed body rides along, so a caller can read a route's richer error shape
+ * (the merge route's `reason` and `gitOutput`) through its own schema.
+ */
+export class ApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly body: unknown,
+  ) {
+    super(message)
+    this.name = 'ApiRequestError'
+  }
+}
 
 async function requestJson(path: string, init?: RequestInit): Promise<unknown> {
   const response = await fetch(path, init)
   if (!response.ok) {
     let message = `request failed with status ${response.status}`
+    let body: unknown = null
     try {
-      const body = (await response.json()) as { error?: unknown }
-      if (typeof body.error === 'string') message = body.error
+      body = await response.json()
+      const error = (body as { error?: unknown } | null)?.error
+      if (typeof error === 'string') message = error
     } catch {
       // non-JSON error body — keep the status message
     }
-    throw new Error(message)
+    throw new ApiRequestError(message, response.status, body)
   }
   return response.json()
 }
+
+/** The request options every mutating route requires (`shared/mutationRequest.ts`). */
+const mutationInit = (body: unknown): RequestInit => ({
+  method: 'POST',
+  headers: {
+    'content-type': 'application/json',
+    [MUTATION_REQUEST_HEADER]: MUTATION_REQUEST_HEADER_VALUE,
+  },
+  body: JSON.stringify(body),
+})
 
 // Responses are parsed through the same shared schemas the server validates
 // with (ADR-0013), so a drifting payload fails loud at the boundary.
@@ -121,13 +154,27 @@ export async function fetchWorkingFileDiff(
  */
 export async function checkout(repositoryRelativePath: string, target: CheckoutTarget): Promise<CheckoutResult> {
   return CheckoutResultSchema.parse(
-    await requestJson('/api/git/checkout', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        [MUTATION_REQUEST_HEADER]: MUTATION_REQUEST_HEADER_VALUE,
-      },
-      body: JSON.stringify({ repo: repositoryRelativePath, target }),
-    }),
+    await requestJson('/api/git/checkout', mutationInit({ repo: repositoryRelativePath, target })),
+  )
+}
+
+/** What merging `branchName` into the checked-out branch would meet, read from git right now. */
+export async function fetchMergePreview(repositoryRelativePath: string, branchName: string): Promise<MergePreview> {
+  const query = new URLSearchParams({ repo: repositoryRelativePath, branch: branchName })
+  return MergePreviewSchema.parse(await requestJson(`/api/git/merge/preview?${query}`))
+}
+
+/**
+ * Merge a branch into the checked-out branch — a write, with the same header
+ * and JSON body as a checkout. A failure throws an {@link ApiRequestError}
+ * whose body is a `MergeError` (read it with `MergeErrorSchema`).
+ */
+export async function merge(
+  repositoryRelativePath: string,
+  target: MergeTarget,
+  { fastForward }: { fastForward: boolean },
+): Promise<MergeResult> {
+  return MergeResultSchema.parse(
+    await requestJson('/api/git/merge', mutationInit({ repo: repositoryRelativePath, ...target, fastForward })),
   )
 }

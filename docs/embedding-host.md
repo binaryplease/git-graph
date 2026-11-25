@@ -2,7 +2,7 @@
 
 Handover for the nightshift-ui builder (the follow-up to this slice). git-graph's
 own server — `bgg`, or `server/index.ts` — can back an embedded graph: every read
-the render layer needs, and the checkout write. The goal is that nightshift-ui
+the render layer needs, and the checkout and merge writes. The goal is that nightshift-ui
 drops `server/git/graph.ts`, its hand-ported copy of the read layer. When it does,
 git-graph issue #8 closes. Nothing here changes the render layer; this note only
 covers the server contract.
@@ -16,7 +16,7 @@ file.
 | Variable | Value the host sets | Why |
 |---|---|---|
 | `GIT_GRAPH_REPOSITORIES_FILE` | Absolute path of a file the host owns, e.g. `$XDG_RUNTIME_DIR/nightshift-ui/git-graph-repositories` | The exact repositories served (see below). This replaces the root scan: `GIT_GRAPH_ROOT` and the positional root are then ignored. |
-| `GIT_GRAPH_ALLOWED_ORIGINS` | Comma-separated exact origins of the host page, e.g. `http://127.0.0.1:3115,http://localhost:3115,http://127.0.0.1:3116,http://localhost:3116,http://127.0.0.1:5175,http://localhost:5175` | CORS reads and the cross-origin checkout for exactly these pages. Write each origin the way a browser sends it: scheme, host, and port, with no path and no trailing slash. `localhost` and `127.0.0.1` are different origins, so list both if the UI can be opened under either. A malformed entry makes the server exit at startup. |
+| `GIT_GRAPH_ALLOWED_ORIGINS` | Comma-separated exact origins of the host page, e.g. `http://127.0.0.1:3115,http://localhost:3115,http://127.0.0.1:3116,http://localhost:3116,http://127.0.0.1:5175,http://localhost:5175` | CORS reads and the cross-origin checkout and merge for exactly these pages. Write each origin the way a browser sends it: scheme, host, and port, with no path and no trailing slash. `localhost` and `127.0.0.1` are different origins, so list both if the UI can be opened under either. A malformed entry makes the server exit at startup. |
 | `HOST` | Leave unset (`127.0.0.1`) | Loopback only. The embedding seam does not change the bind (ADR-0037 §4). |
 | `PORT` / `GIT_GRAPH_PORT_STRATEGY` | A canonical port with `auto`, or `strict` for an operator pin | The same as `bgg`. |
 | `GIT_GRAPH_READY_FILE` | A private path | The server writes the port it bound there once it is listening. Read the port back from this file; do not parse stdout. |
@@ -116,12 +116,36 @@ Build the confirmation wording with `describeCheckout` (from `git-graph/shared`)
 so the host's wording matches git-graph's own. After a `200`, refetch the log,
 branches, working tree, and open commit, as `App.tsx` does.
 
+**Merge.** "Merge x into <checked-out branch>" takes two requests:
+
+1. `GET /api/git/merge/preview?repo=<identifier>&branch=<branch>` returns a
+   `MergePreview`: the branch checked out now (`into`, null when detached),
+   `alreadyMerged`, `canFastForward`, `uncommittedFiles` (tracked paths only) and
+   `mergeInProgress`. Hand it to `ConfirmMergeDialog`, which shows what blocks the
+   merge and disables the Fast Forward option where it cannot apply.
+2. `POST /api/git/merge` with the same two headers as the checkout and the body
+   `{ "repo": "<identifier>", "branch": "x", "into": "<checked-out branch>", "fastForward": false }`
+   (`MergeRequestSchema`). `fastForward: false` is a `--no-ff` merge commit;
+   `true` is `--ff-only`. `into` is the branch the host's menu saw checked out
+   (`mergeTargetForEntry`); the server refuses the merge if `HEAD` is elsewhere.
+
+Responses: `200` with `MergeResult` (`repository`, `head`, `branch`,
+`fastForward`, and git's one-line `message`). Every failure body is a
+`MergeError`: `error`, `reason`, and `gitOutput` (git's output verbatim when git
+ran). `404` for an unknown repository or branch; `409` for a refusal before git
+ran (`stale-head`, `merge-in-progress`, `uncommitted-changes`,
+`nothing-to-merge`, `fast-forward-impossible`), for git's own refusal
+(`merge-refused`), and for a conflict that was aborted (`conflict-aborted`);
+`500` for `abort-failed` (the repository is still mid-merge) and `git-failed`.
+Show a failure with `describeMergeFailure` in the dialog's `failure` prop.
+Nothing is pushed.
+
 ## What stays refused
 
 The host's configuration opens nothing else:
 
 - An origin that is not listed gets no CORS headers, so its browser withholds
-  the read. Its checkout gets a `403`, and its preflight is not granted.
+  the read. Its checkout or merge gets a `403`, and its preflight is not granted.
 - A foreign `Host` (DNS rebinding) gets a `421` on every route, before the CORS
   step runs, whatever the `Origin`.
 - A repository that is not in the file gets a `404`, including a sibling of a

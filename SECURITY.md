@@ -32,9 +32,9 @@ vulnerabilities:
 - **Whoever can write the repositories file decides what is served.** It is
   operator configuration, re-read on every request, exactly like the environment;
   keep it where only the operator (or the supervising host) can write it.
-- **A configured embedding origin reads and checks out like the git-graph page
-  itself.** Naming an origin in `GIT_GRAPH_ALLOWED_ORIGINS` grants that page CORS
-  reads and the checkout; that is the point of the setting.
+- **A configured embedding origin reads, checks out and merges like the git-graph
+  page itself.** Naming an origin in `GIT_GRAPH_ALLOWED_ORIGINS` grants that page
+  CORS reads and both writes; that is the point of the setting.
 
 What **is** in scope:
 
@@ -55,15 +55,20 @@ What **is** in scope:
   granted only to an `Origin` that exactly equals an entry of
   `GIT_GRAPH_ALLOWED_ORIGINS` (none by default); a grant to any other origin is in
   scope.
-- **Any write other than a confirmed checkout.** `POST /api/git/checkout` is the
-  only route that changes a repository. Any other way to mutate a repository is a
-  bug with security weight. So is any way to make the checkout act on a ref or
-  commit git's own listings do not name, or to trigger it from a foreign web
-  page. The checkout requires the `X-Git-Graph-Action: 1` header and a JSON
-  body, and refuses a request the browser marks cross-site or whose `Origin`
-  names a host the server does not answer for — unless that `Origin` is exactly
-  one listed in `GIT_GRAPH_ALLOWED_ORIGINS`. A way around that gate is in
-  scope.
+- **Any write other than a confirmed checkout or merge.** `POST
+  /api/git/checkout` and `POST /api/git/merge` are the only routes that change a
+  repository, and neither pushes or fetches. Any other way to mutate a repository
+  is a bug with security weight. So is any way to make the checkout act on a ref
+  or commit git's own listings do not name, to make the merge bring in anything
+  but a branch `for-each-ref refs/heads` lists, to make it run into a branch other
+  than the one the request names as checked out, or to trigger either from a
+  foreign web page. A merge that conflicts must be undone with `git merge
+  --abort`; a way to leave a repository mid-merge while the response reports
+  otherwise is in scope. Both writes require the `X-Git-Graph-Action: 1` header
+  and a JSON body, and refuse a request the browser marks cross-site or whose
+  `Origin` names a host the server does not answer for — unless that `Origin` is
+  exactly one listed in `GIT_GRAPH_ALLOWED_ORIGINS`. A way around that gate is
+  in scope.
 
 ## Deploying it beyond loopback
 
@@ -74,5 +79,5 @@ the server answers for, so a proxy that passes its public host through in
 acknowledgement, not a protection: if you set it, you are asserting that an authenticating reverse
 proxy fronts the service and the port is not directly reachable. Exposing the
 service without one publishes the full contents of every repository under the
-served root to anyone who can reach it, and lets them check out refs in those
-repositories.
+served root to anyone who can reach it, and lets them check out refs and merge
+branches in those repositories.

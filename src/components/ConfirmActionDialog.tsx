@@ -1,11 +1,11 @@
-import { useEffect, useRef, type KeyboardEvent } from 'react'
+import { useEffect, useRef, type KeyboardEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { IconAlertTriangle, IconLoader2 } from '@tabler/icons-react'
+import { IconAlertTriangle, IconBan, IconLoader2 } from '@tabler/icons-react'
 import type { GitActionDescription } from '../../shared/gitActions'
 
 // The step between choosing a git write and running it (issue #2: "every
 // mutating action states what it will do to which repo before it runs"). The
-// wording comes from `git-graph/shared` (`describeCheckout`), so a host confirms
+// wording comes from `git-graph/shared` (`describeCheckout`, `describeMerge`), so a host confirms
 // in the same words; this is the one frame around it (ADR-0026). Fetch-free: the
 // host runs the action on confirm and hands back `isRunning` and, when git
 // refuses, its stderr as `error` — shown verbatim, in place, so the user reads
@@ -16,13 +16,32 @@ export type ConfirmActionDialogProps = {
   description: GitActionDescription
   /** True while the host is running the action; both buttons wait. */
   isRunning: boolean
-  /** Why the last attempt failed — git's stderr for a refusal — or null. */
+  /** Why the last attempt failed — git's stderr for a refusal — or null. Shown verbatim. */
   error: string | null
+  /** The line above `error`, saying what state the failure left. Defaults to `git refused:`. */
+  errorHeading?: string
+  /**
+   * Why the action cannot run in the repository's current state, or null when it
+   * can. Set → the reason is shown in the dialog and the confirm stays visible,
+   * `aria-disabled`, with the reason as its title (ADR-0025).
+   */
+  blockedReason?: string | null
+  /** Options the action takes (e.g. a merge's Fast Forward), shown between the statement and the buttons. */
+  children?: ReactNode
   onConfirm: () => void
   onCancel: () => void
 }
 
-export function ConfirmActionDialog({ description, isRunning, error, onConfirm, onCancel }: ConfirmActionDialogProps) {
+export function ConfirmActionDialog({
+  description,
+  isRunning,
+  error,
+  errorHeading = 'git refused:',
+  blockedReason = null,
+  children,
+  onConfirm,
+  onCancel,
+}: ConfirmActionDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const confirmRef = useRef<HTMLButtonElement>(null)
 
@@ -46,7 +65,7 @@ export function ConfirmActionDialog({ description, isRunning, error, onConfirm, 
     }
     // Keep Tab inside the dialog while it is modal.
     if (event.key !== 'Tab') return
-    const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>('button') ?? [])]
+    const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>('button, input:not(:disabled)') ?? [])]
     const first = focusable[0]
     const last = focusable.at(-1)
     if (first === undefined || last === undefined) return
@@ -92,9 +111,16 @@ export function ConfirmActionDialog({ description, isRunning, error, onConfirm, 
             ))}
           </ul>
         )}
+        {children}
+        {blockedReason !== null && (
+          <p className="mt-3 flex items-start gap-2 text-[12.5px] text-[#ff7b72]" data-blocked-reason>
+            <IconBan size={15} className="mt-0.5 shrink-0" aria-hidden />
+            <span>{blockedReason}</span>
+          </p>
+        )}
         {error !== null && (
           <div role="alert" className="mt-3">
-            <p className="text-[12.5px] text-[#ff7b72]">git refused:</p>
+            <p className="text-[12.5px] text-[#ff7b72]">{errorHeading}</p>
             <pre className="mt-1 max-h-48 overflow-auto rounded-md border border-line bg-canvas p-2 font-mono text-[11.5px] whitespace-pre-wrap text-fg">
               {error}
             </pre>
@@ -117,10 +143,10 @@ export function ConfirmActionDialog({ description, isRunning, error, onConfirm, 
             type="button"
             className={`${buttonClass} border-accent bg-accent/15 text-fg hover:bg-accent/25`}
             onClick={() => {
-              if (!isRunning) onConfirm()
+              if (!isRunning && blockedReason === null) onConfirm()
             }}
-            aria-disabled={isRunning ? 'true' : undefined}
-            title={isRunning ? 'waiting for git to finish' : undefined}
+            aria-disabled={isRunning || blockedReason !== null ? 'true' : undefined}
+            title={isRunning ? 'waiting for git to finish' : (blockedReason ?? undefined)}
           >
             {isRunning && <IconLoader2 size={14} className="animate-spin" aria-hidden />}
             {error !== null ? 'Try again' : description.confirmLabel}

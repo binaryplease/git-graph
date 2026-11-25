@@ -9,7 +9,7 @@ import {
   IconSearch,
   IconX,
 } from '@tabler/icons-react'
-import { describeCheckout, findHeadState } from '../shared/gitActions'
+import { describeCheckout, describeMergeFailure, findHeadState, type GitActionFailure } from '../shared/gitActions'
 import type {
   BranchList,
   CheckoutTarget,
@@ -17,17 +17,23 @@ import type {
   CommitLog,
   FileDiff,
   GitCommit,
+  MergePreview,
+  MergeTarget,
   RepositoryList,
   WorkingTree,
 } from '../shared/git.schema'
+import { MergeErrorSchema } from '../shared/git.schema'
 import {
+  ApiRequestError,
   checkout,
   fetchBranches,
   fetchCommitDetail,
   fetchCommitLog,
   fetchFileDiff,
+  fetchMergePreview,
   fetchRepositories,
   fetchWorkingTree,
+  merge,
 } from './lib/api'
 import { commitDiffHref, compareHref, fileDiffHref, workingHref } from './lib/diffRoutes'
 import { loadHighlighter } from './lib/highlighter'
@@ -40,6 +46,7 @@ import {
   CommitGraph,
   CommitDetailPanel,
   ConfirmActionDialog,
+  ConfirmMergeDialog,
   GitActionMenu,
   UncommittedChangesRow,
   graphContentLeft,
@@ -112,6 +119,15 @@ export function App() {
   const [pendingCheckout, setPendingCheckout] = useState<CheckoutTarget | null>(null)
   const [isCheckingOut, setIsCheckingOut] = useState(false)
   const [checkoutError, setCheckoutError] = useState<string | null>(null)
+  // The merge waiting on its confirmation: what git reports about it (read when
+  // the dialog opens, and again after a failed attempt), and how the last attempt
+  // failed.
+  const [pendingMerge, setPendingMerge] = useState<MergeTarget | null>(null)
+  const [mergePreview, setMergePreview] = useState<MergePreview | null>(null)
+  const [mergePreviewError, setMergePreviewError] = useState<string | null>(null)
+  const [mergeAttempt, setMergeAttempt] = useState(0)
+  const [isMerging, setIsMerging] = useState(false)
+  const [mergeFailure, setMergeFailure] = useState<GitActionFailure | null>(null)
   const [notice, setNotice] = useState<GitActionNotice | null>(null)
 
   // Loading a syntax grammar the first time a diff is expanded costs about half
@@ -187,7 +203,28 @@ export function App() {
     setWorkingTree(null)
     setContextMenu(null)
     setPendingCheckout(null)
+    setPendingMerge(null)
   }, [selectedRepository])
+
+  // Read what a pending merge would meet — uncommitted changes, nothing to merge,
+  // whether a fast-forward is possible — from git itself, not from the loaded
+  // window. Read again after a failed attempt, since the state may have moved.
+  useEffect(() => {
+    setMergePreview(null)
+    setMergePreviewError(null)
+    if (selectedRepository === null || pendingMerge === null) return
+    let cancelled = false
+    fetchMergePreview(selectedRepository, pendingMerge.branch)
+      .then((preview) => {
+        if (!cancelled) setMergePreview(preview)
+      })
+      .catch((error: Error) => {
+        if (!cancelled) setMergePreviewError(error.message)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedRepository, pendingMerge, mergeAttempt])
 
   // A checkout in another tab changes what this one shows.
   useRepositoryChanges(
@@ -353,13 +390,55 @@ export function App() {
     }
   }
 
+  // A merge runs like a checkout: the menu names it, the dialog states it and
+  // shows what blocks it, and only the dialog's confirm runs git.
+  const requestMerge = useCallback((target: MergeTarget) => {
+    setMergeFailure(null)
+    setPendingMerge(target)
+  }, [])
+
+  const cancelMerge = useCallback(() => {
+    setPendingMerge(null)
+    setMergeFailure(null)
+  }, [])
+
+  async function confirmMerge({ fastForward }: { fastForward: boolean }) {
+    if (selectedRepository === null || pendingMerge === null) return
+    setIsMerging(true)
+    setMergeFailure(null)
+    try {
+      const result = await merge(selectedRepository, pendingMerge, { fastForward })
+      setPendingMerge(null)
+      setNotice({ tone: 'success', text: result.message || `${result.branch} is now at ${result.head}` })
+      // Nothing is pushed; everything that shows this repository refetches.
+      setRepositoryVersion((version) => version + 1)
+      announceRepositoryChange(selectedRepository)
+    } catch (error) {
+      // Kept in the dialog: git's output verbatim under a heading that says what
+      // state the repository was left in (a conflict aborted, or still mid-merge).
+      const parsed = error instanceof ApiRequestError ? MergeErrorSchema.safeParse(error.body) : null
+      setMergeFailure(
+        parsed?.success
+          ? describeMergeFailure(parsed.data)
+          : { heading: 'The merge failed:', text: error instanceof Error ? error.message : 'the merge failed' },
+      )
+      setMergeAttempt((attempt) => attempt + 1)
+      // An aborted conflict leaves the repository as it was, but an abort that
+      // failed leaves it mid-merge — either way the graph re-reads it.
+      setRepositoryVersion((version) => version + 1)
+      announceRepositoryChange(selectedRepository)
+    } finally {
+      setIsMerging(false)
+    }
+  }
+
   const loadedHashes = useMemo(() => new Set(commits.map((commit) => commit.hash)), [commits])
   const isCommitLoaded = useCallback((commitHash: string) => loadedHashes.has(commitHash), [loadedHashes])
 
   // Esc closes the panel; ↑/↓ walk the graph while it is open, so a commit can
   // be read through without going back to the mouse. Typing in the search box
   // keeps its own arrow-key behaviour.
-  const isOverlayOpen = contextMenu !== null || pendingCheckout !== null
+  const isOverlayOpen = contextMenu !== null || pendingCheckout !== null || pendingMerge !== null
   useEffect(() => {
     // An open menu or dialog owns the keyboard; ↑/↓ and Esc are theirs then.
     if (selectedCommitHash === null || isOverlayOpen) return
@@ -642,6 +721,7 @@ export function App() {
           anchor={contextMenu.anchor}
           onClose={closeContextMenu}
           onCheckout={requestCheckout}
+          onMerge={requestMerge}
           buildCommitHref={buildMenuCommitHref}
           buildCompareHref={buildCompareHref}
           onNotice={setNotice}
@@ -657,6 +737,18 @@ export function App() {
           error={checkoutError}
           onConfirm={confirmCheckout}
           onCancel={cancelCheckout}
+        />
+      )}
+      {pendingMerge !== null && (
+        <ConfirmMergeDialog
+          target={pendingMerge}
+          repositoryName={repositoryName}
+          preview={mergePreview}
+          previewError={mergePreviewError}
+          isRunning={isMerging}
+          failure={mergeFailure}
+          onConfirm={confirmMerge}
+          onCancel={cancelMerge}
         />
       )}
     </div>

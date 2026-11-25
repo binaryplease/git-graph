@@ -1,10 +1,16 @@
 import { describe, expect, test } from 'bun:test'
 import type { GitCommit } from './git.schema'
+import type { MergePreview } from './git.schema'
 import {
   buildGitMenuSections,
   checkoutTargetForEntry,
   describeCheckout,
+  describeMerge,
+  describeMergeFailure,
+  fastForwardUnavailableReason,
   findHeadState,
+  mergeBlockedReason,
+  mergeTargetForEntry,
   type GitMenuSection,
   type HeadState,
 } from './gitActions'
@@ -13,7 +19,9 @@ import { groupRefDecorations } from './refGroup'
 // The menu descriptor is the one place that decides which entries a row or a
 // pill offers and why one cannot apply. Pinned here: no entry is ever *missing*
 // (ADR-0025 — an entry that cannot apply is present with a reason), and the
-// reasons follow the repository state rather than the menu's own guesses.
+// reasons follow the repository state rather than the menu's own guesses. The
+// one exception is the operator's (issue #2): the checked-out branch has no
+// "Merge … into …" entry at all.
 
 const FULL_HASH = 'abc1234'.padEnd(40, '0')
 
@@ -64,6 +72,7 @@ describe('buildGitMenuSections', () => {
       ['commit abc1234', 'copy-short-hash', null],
       ['commit abc1234', 'open-commit', null],
       ['branch feature', 'checkout-branch', null],
+      ['branch feature', 'merge-branch', null],
       ['branch feature', 'compare-branch', null],
       ['tag v1.0', 'checkout-tag', null],
     ])
@@ -98,7 +107,7 @@ describe('buildGitMenuSections', () => {
     ])
   })
 
-  test('a remote-only ref offers checkout and compare, both disabled with the reason', () => {
+  test('a remote-only ref offers checkout, merge and compare, each disabled with the reason', () => {
     const target = commit({ refs: ['origin/published'] })
     const refGroups = groupRefDecorations(target.refs, ['origin'])
     const [remoteSection] = buildGitMenuSections({
@@ -109,7 +118,11 @@ describe('buildGitMenuSections', () => {
       defaultBranch: 'main',
     })
     expect(remoteSection!.heading).toBe('remote branch origin/published')
-    expect(remoteSection!.entries.map((entry) => entry.action)).toEqual(['checkout-branch', 'compare-branch'])
+    expect(remoteSection!.entries.map((entry) => entry.action)).toEqual([
+      'checkout-branch',
+      'merge-branch',
+      'compare-branch',
+    ])
     for (const entry of remoteSection!.entries) {
       expect(entry.unavailableReason).toContain('origin/published has no local branch')
     }
@@ -159,7 +172,7 @@ describe('buildGitMenuSections', () => {
     expect(reasonFor('compare-branch')).toBe('no default branch is known for this repository')
   })
 
-  test('only checkouts are marked as mutating', () => {
+  test('only checkouts and merges are marked as mutating', () => {
     const target = commit({ refs: ['feature', 'tag: v1'] })
     const sections = buildGitMenuSections({
       commit: target,
@@ -169,7 +182,124 @@ describe('buildGitMenuSections', () => {
       defaultBranch: 'main',
     })
     const mutating = sections.flatMap((section) => section.entries.filter((entry) => entry.mutates))
-    expect(mutating.map((entry) => entry.action)).toEqual(['checkout-commit', 'checkout-branch', 'checkout-tag'])
+    expect(mutating.map((entry) => entry.action)).toEqual([
+      'checkout-commit',
+      'checkout-branch',
+      'merge-branch',
+      'checkout-tag',
+    ])
+  })
+})
+
+describe('the merge entry', () => {
+  const sectionsFor = (refs: string[], head: HeadState, remotes: string[] = []) => {
+    const target = commit({ refs })
+    return buildGitMenuSections({
+      commit: target,
+      refGroups: groupRefDecorations(target.refs, remotes),
+      focusedGroup: null,
+      head,
+      defaultBranch: 'main',
+    })
+  }
+  const mergeEntries = (sections: GitMenuSection[]) =>
+    sections.flatMap((section) => section.entries).filter((entry) => entry.action === 'merge-branch')
+
+  test('names the branch it merges and the checked-out branch it merges into', () => {
+    const [entry] = mergeEntries(sectionsFor(['x'], onMain))
+    expect(entry).toMatchObject({ label: 'Merge x into main', subject: 'x', unavailableReason: null, mutates: true })
+  })
+
+  test('is absent on the checked-out branch itself — on its row and on its unified pill alike', () => {
+    const sections = sectionsFor(['HEAD -> main', 'origin/main', 'x'], { hash: 'abc1234', branch: 'main' }, ['origin'])
+    expect(mergeEntries(sections).map((entry) => entry.label)).toEqual(['Merge x into main'])
+    const mainSection = sections.find((section) => section.heading === 'branch main')!
+    expect(mainSection.entries.map((entry) => entry.action)).toEqual(['checkout-branch', 'compare-branch'])
+  })
+
+  test('a remote-only ref keeps it, disabled with the reason', () => {
+    const [entry] = mergeEntries(sectionsFor(['origin/published'], onMain, ['origin']))
+    expect(entry!.label).toBe('Merge origin/published into main')
+    expect(entry!.unavailableReason).toBe('origin/published has no local branch — only local branches can be merged')
+  })
+
+  test('with no checked-out branch it stays, disabled with the reason, naming the branch it would merge', () => {
+    const [detached] = mergeEntries(sectionsFor(['x'], { hash: 'fff0000', branch: null }))
+    expect(detached).toMatchObject({
+      label: 'Merge x into current branch',
+      unavailableReason: 'HEAD is detached — no branch is checked out to merge into',
+    })
+    const [unknown] = mergeEntries(sectionsFor(['x'], { hash: null, branch: null }))
+    expect(unknown).toMatchObject({
+      label: 'Merge x into current branch',
+      unavailableReason: 'HEAD is not in the loaded history, so the checked-out branch is unknown',
+    })
+  })
+
+  test('tags and the commit get no merge entry', () => {
+    expect(mergeEntries(sectionsFor(['tag: v1'], onMain))).toEqual([])
+  })
+
+  test('maps to the merge request naming the branch HEAD was on — and to nothing without one', () => {
+    const [entry] = mergeEntries(sectionsFor(['x'], onMain))
+    expect(mergeTargetForEntry(entry!, onMain)).toEqual({ branch: 'x', into: 'main' })
+    expect(mergeTargetForEntry(entry!, { hash: 'fff0000', branch: null })).toBeNull()
+    const checkoutEntry = sectionsFor(['x'], onMain)[1]!.entries[0]!
+    expect(mergeTargetForEntry(checkoutEntry, onMain)).toBeNull()
+  })
+})
+
+describe('the merge confirmation wording', () => {
+  const target = { branch: 'x', into: 'main' }
+  const preview = (overrides: Partial<MergePreview> = {}): MergePreview => ({
+    repository: 'git-graph',
+    branch: 'x',
+    into: 'main',
+    alreadyMerged: false,
+    canFastForward: false,
+    uncommittedFiles: [],
+    mergeInProgress: false,
+    ...overrides,
+  })
+
+  test('states the --no-ff command by default and the --ff-only one when Fast Forward is chosen; never a push', () => {
+    const merge = describeMerge(target, { repositoryName: 'git-graph', fastForward: false })
+    expect(merge.title).toBe('Merge x into main?')
+    expect(merge.summary).toContain('git merge --no-ff --no-edit x in git-graph')
+    expect(merge.summary).toContain('Nothing is pushed.')
+    expect(merge.confirmLabel).toBe('Merge')
+    const fastForward = describeMerge(target, { repositoryName: 'git-graph', fastForward: true })
+    expect(fastForward.summary).toContain('git merge --ff-only x')
+    expect(fastForward.confirmLabel).toBe('Fast-forward')
+  })
+
+  test('blocks on uncommitted changes, nothing to merge, a merge in progress, and a moved HEAD', () => {
+    expect(mergeBlockedReason(target, preview())).toBeNull()
+    expect(mergeBlockedReason(target, preview({ uncommittedFiles: ['a.txt', 'b.txt'] }))).toBe(
+      'main has uncommitted changes to 2 tracked files (a.txt, b.txt) — commit or stash them before merging',
+    )
+    expect(mergeBlockedReason(target, preview({ alreadyMerged: true }))).toBe(
+      'main already contains x — there is nothing to merge',
+    )
+    expect(mergeBlockedReason(target, preview({ mergeInProgress: true }))).toContain('in the middle of a merge')
+    expect(mergeBlockedReason(target, preview({ into: 'other' }))).toContain('HEAD is on other now, not on main')
+    expect(mergeBlockedReason(target, preview({ into: null }))).toContain('HEAD is detached now')
+  })
+
+  test('offers a fast-forward only where git’s ancestry allows one', () => {
+    expect(fastForwardUnavailableReason(target, preview({ canFastForward: true }))).toBeNull()
+    expect(fastForwardUnavailableReason(target, preview())).toBe(
+      'main has commits that x does not, so a fast-forward is not possible',
+    )
+  })
+
+  test('a conflict reads as aborted, with git’s output as the text', () => {
+    const gitOutput = 'Auto-merging a.txt\nCONFLICT (content): Merge conflict in a.txt'
+    const failure = describeMergeFailure({ error: 'sentence', reason: 'conflict-aborted', gitOutput })
+    expect(failure.heading).toContain('conflicted and was aborted')
+    expect(failure.text).toBe(gitOutput)
+    expect(describeMergeFailure({ error: 'e', reason: 'abort-failed', gitOutput }).heading).toContain('still mid-merge')
+    expect(describeMergeFailure({ error: 'HEAD moved', reason: 'stale-head', gitOutput: '' }).text).toBe('HEAD moved')
   })
 })
 

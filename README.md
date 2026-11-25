@@ -18,7 +18,8 @@ GitLens, GitKraken), as a standalone local-machine service.
 
 Point it at a folder of projects, pick a repository, and read its history in a
 browser: lanes, merges, ref pills, diffs, and uncommitted changes — and check out
-a branch, tag, or commit straight from the graph.
+a branch, tag, or commit, or merge a branch into the checked-out one, straight
+from the graph.
 
 ## Quick start
 
@@ -95,7 +96,8 @@ or a file that cannot be read, is a fatal startup error.
   three-dot against the default branch), or the working tree.
 - A **context menu** on every commit row and ref pill — right-click, or
   `Shift+F10` / the context-menu key on a focused row: check out a branch, a tag,
-  or a commit (detached `HEAD`, with a warning saying so), copy the full or short
+  or a commit (detached `HEAD`, with a warning saying so), merge a local branch
+  into the checked-out branch ("Merge x into main"), copy the full or short
   hash, open the commit in a diff tab, or compare a branch against the default
   branch. Entries that cannot apply stay in the menu, disabled, and say why.
 - A **repository picker**, deep-linkable via `?repo=`.
@@ -103,13 +105,26 @@ or a file that cannot be read, is a fatal startup error.
 
 ## What it changes
 
-**Checkout is the one write.** Everything else is read-only. A checkout always
-states what it will run, in which repository, before it runs — a detaching one
-warns that it detaches `HEAD` — and only runs on your confirm. It is `git
-switch` underneath, so git's own safety stays in charge: a switch that would
-overwrite uncommitted changes is refused, and git's message is shown to you
-verbatim. After a checkout the graph, the working-tree row, and any open
-`/working` tab refresh.
+**Checkout and merge are the two writes.** Everything else is read-only, and
+nothing is ever pushed or fetched. Each write states what it will run, in which
+repository, before it runs, and only runs on your confirm.
+
+- A **checkout** is `git switch` underneath; a detaching one warns that it
+  detaches `HEAD`. git's own safety stays in charge: a switch that would
+  overwrite uncommitted changes is refused, and git's message is shown to you
+  verbatim.
+- A **merge** brings a local branch into the checked-out branch. By default it
+  is `git merge --no-ff --no-edit`: always a merge commit, with git's default
+  message, which is never shown or edited. The dialog's **Fast Forward** option
+  (unchecked by default) runs `git merge --ff-only` instead; it is disabled, with
+  the reason, when git's ancestry says a fast-forward is not possible. Uncommitted
+  changes to tracked files block the merge (untracked files do not), and so does
+  a branch the checked-out one already contains. A merge that conflicts is undone
+  with `git merge --abort`, and the dialog shows git's output, conflicting paths
+  included. The checked-out branch's own menu has no merge entry.
+
+After either write the graph, the working-tree row, and any open `/working` tab
+refresh.
 
 ## Security model — loopback by default
 
@@ -139,11 +154,14 @@ untrusted input is re-validated by membership against git's own listings —
 repository ids against the repo listing, file paths against a commit's own file
 list, refs against `git for-each-ref` — and nothing is interpolated into a
 shell. A checkout holds the same line: the branch or tag must come out of
-`git for-each-ref`, the commit out of the history the graph shows.
+`git for-each-ref`, the commit out of the history the graph shows. So does a
+merge: the branch must come out of `git for-each-ref refs/heads`, and the request
+names the branch it expects to be checked out, so a merge chosen against a stale
+graph is refused with `HEAD` untouched.
 
-The checkout route also refuses requests that did not come from the git-graph
-page itself. Loopback keeps other machines out, but not other web pages open in
-your browser, which can send requests to `127.0.0.1` too. So a checkout must
+The write routes (checkout and merge) also refuse requests that did not come from
+the git-graph page itself. Loopback keeps other machines out, but not other web
+pages open in your browser, which can send requests to `127.0.0.1` too. So a write must
 carry a custom header and a JSON body, which a foreign page cannot send without a
 CORS preflight the server never answers. A browser request marked
 `Sec-Fetch-Site: cross-site`, or whose `Origin` names a host the server does not
@@ -155,7 +173,7 @@ default. `GIT_GRAPH_ALLOWED_ORIGINS` names the exact origins
 (`http://127.0.0.1:3115` — scheme, host, port, as a browser writes `Origin`) of
 pages that mount the graph and talk to this server across origins. Those origins,
 and only those, get CORS headers (so their browser lets them read responses and
-grants the checkout's preflight) and may send the checkout as `same-site` or
+grants the writes' preflight) and may send a checkout or merge as `same-site` or
 `cross-site`. Nothing else is relaxed: the custom header, the JSON body, the Host
 check, and the membership checks all still apply, and an unlisted origin is
 refused exactly as before. A malformed entry is a fatal startup error. The
@@ -190,7 +208,7 @@ source alias (Vite `resolve.alias`) or a git dependency.
 A host can also use git-graph's own server as its backend instead of
 re-implementing the git layer: launch it with `GIT_GRAPH_REPOSITORIES_FILE` (the
 repositories the host knows) and `GIT_GRAPH_ALLOWED_ORIGINS` (the host page's
-origins), and fetch the API cross-origin — reads and checkout alike. See
+origins), and fetch the API cross-origin — reads, checkout and merge alike. See
 [`docs/embedding-host.md`](docs/embedding-host.md).
 
 ## Development
@@ -230,10 +248,10 @@ with [Shiki](https://shiki.style) tokenization; icons are
 
 ## Status
 
-Pre-1.0. The context menu ships with checkout as its first git action. The
+Pre-1.0. The context menu ships with checkout and merge as its git actions. The
 rest of [#2](https://github.com/binaryplease/git-graph/issues/2) will follow as
 their own slices, one action at a time: create a branch or tag, revert,
-cherry-pick, reset, merge, rebase, delete, push/pull/fetch, and rename.
+cherry-pick, reset, rebase, delete, push/pull/fetch, and rename.
 
 ## License
 

@@ -426,6 +426,117 @@ export const CheckoutResultSchema = z.object({
 })
 export type CheckoutResult = z.infer<typeof CheckoutResultSchema>
 
+// "Merge <branch> into <checked-out branch>" — the second git write. Like a
+// checkout's, the branch name carries no pattern: the guard is membership
+// against `refs/heads`. The request also names the branch the client believes is
+// checked out, so a merge chosen against a stale graph is refused, not run into
+// whatever HEAD has moved to since.
+export const MergeTargetSchema = z.object({
+  branch: z.string().min(1).describe('Local branch to merge — validated by membership against `refs/heads`.'),
+  into: z
+    .string()
+    .min(1)
+    .describe(
+      'The branch the client believes is checked out. The merge is refused, with HEAD untouched, unless HEAD ' +
+        'is on exactly this branch when the request arrives.',
+    ),
+})
+export type MergeTarget = z.infer<typeof MergeTargetSchema>
+
+export const MergeRequestSchema = MergeTargetSchema.extend({
+  repo: z.string().default('').describe('Repository identifier: a `relativePath` from the repository listing.'),
+  fastForward: z
+    .boolean()
+    .default(false)
+    .describe(
+      'false (the default): `git merge --no-ff`, always a merge commit. true: `git merge --ff-only`, a ' +
+        'fast-forward and only a fast-forward — refused when the checked-out branch has commits the merged one lacks.',
+    ),
+})
+export type MergeRequest = z.infer<typeof MergeRequestSchema>
+
+export const MergePreviewQuerySchema = z.object({
+  repo: z.string().default('').describe('Repository identifier: a `relativePath` from the repository listing.'),
+  branch: z.string().min(1).describe('Local branch the merge would bring in — validated by membership against `refs/heads`.'),
+})
+export type MergePreviewQuery = z.infer<typeof MergePreviewQuerySchema>
+
+/**
+ * What a merge of `branch` into the checked-out branch would meet, read from
+ * git's own ancestry and working tree at the moment of the request — not from
+ * the client's loaded window. The confirm dialog reads it to decide whether the
+ * merge can run and whether a fast-forward is possible.
+ */
+export const MergePreviewSchema = z.object({
+  repository: z.string().describe('Display name of the repository.'),
+  branch: z.string().describe('The branch the merge would bring in, as `refs/heads` lists it.'),
+  into: z
+    .string()
+    .nullable()
+    .default(null)
+    .describe('The branch checked out right now, or null when HEAD is detached (ADR-0024).'),
+  alreadyMerged: z
+    .boolean()
+    .default(false)
+    .describe('True when the checked-out branch already contains `branch` — there is nothing to merge.'),
+  canFastForward: z
+    .boolean()
+    .default(false)
+    .describe('True when HEAD is an ancestor of `branch` (and the two differ), so `--ff-only` would succeed.'),
+  uncommittedFiles: z
+    .array(z.string())
+    .default([])
+    .describe(
+      'Tracked paths that differ from HEAD, staged or not. Any entry blocks the merge; untracked files are not listed.',
+    ),
+  mergeInProgress: z
+    .boolean()
+    .default(false)
+    .describe('True when the repository is already mid-merge (`MERGE_HEAD` exists); that blocks a new one.'),
+})
+export type MergePreview = z.infer<typeof MergePreviewSchema>
+
+export const MergeResultSchema = z.object({
+  repository: z.string().describe('Display name of the repository merged into.'),
+  head: z.string().describe('Abbreviated hash the checked-out branch points at after the merge.'),
+  branch: z.string().describe('The checked-out branch the merge went into.'),
+  fastForward: z.boolean().default(false).describe('True when the merge was a fast-forward, false for a merge commit.'),
+  message: z
+    .string()
+    .default('')
+    .describe("git's own one-line report, e.g. `Merge made by the 'ort' strategy.`"),
+})
+export type MergeResult = z.infer<typeof MergeResultSchema>
+
+/** Every way a merge request can end without merging, as the error body names it. */
+export const MergeFailureReasonSchema = z.enum([
+  'unknown-repository',
+  'unknown-ref',
+  'stale-head',
+  'merge-in-progress',
+  'uncommitted-changes',
+  'nothing-to-merge',
+  'fast-forward-impossible',
+  'merge-refused',
+  'conflict-aborted',
+  'abort-failed',
+  'git-failed',
+])
+export type MergeFailureReason = z.infer<typeof MergeFailureReasonSchema>
+
+export const MergeErrorSchema = z.object({
+  error: z.string().describe('Human-readable description of what went wrong, git’s output included where there is any.'),
+  reason: MergeFailureReasonSchema.default('git-failed').describe(
+    'Why the merge did not happen. `conflict-aborted`: it conflicted and `git merge --abort` restored the ' +
+      'repository. `abort-failed`: it conflicted and the abort failed too, so the repository is still mid-merge.',
+  ),
+  gitOutput: z
+    .string()
+    .default('')
+    .describe("git's own output, verbatim (the conflicting paths for a conflict); empty when git did not run."),
+})
+export type MergeError = z.infer<typeof MergeErrorSchema>
+
 export const GitErrorSchema = z.object({
   error: z.string().describe('Human-readable description of what went wrong.'),
 })

@@ -1,4 +1,5 @@
-import type { CheckoutTarget, GitCommit } from './git.schema'
+import type { CheckoutTarget, GitCommit, MergeError, MergePreview, MergeTarget } from './git.schema'
+import { uncommittedChangesReason } from './merge'
 import { classifyRefDecoration, refGroupLabel, type RefGroup } from './refGroup'
 
 // The git-action context menu, as data. Which entries a commit row or a ref pill
@@ -11,7 +12,9 @@ import { classifyRefDecoration, refGroupLabel, type RefGroup } from './refGroup'
 //
 // An entry that cannot apply is never dropped (ADR-0025): it carries the reason
 // as `unavailableReason`, and the menu shows it disabled with that reason as its
-// title.
+// title. One exception, the operator's decision for issue #2: the checked-out
+// branch gets no "Merge … into …" entry at all, since merging a branch into
+// itself is not an action anyone looks for there.
 
 export type GitActionId =
   | 'checkout-commit'
@@ -20,6 +23,7 @@ export type GitActionId =
   | 'open-commit'
   | 'checkout-branch'
   | 'compare-branch'
+  | 'merge-branch'
   | 'checkout-tag'
 
 /** Where HEAD is, as far as the loaded history can say. */
@@ -125,6 +129,37 @@ function commitSection({ commit, head }: GitMenuInput): GitMenuSection {
   }
 }
 
+/** What a merge entry names as the branch it merges into: the checked-out one, or a placeholder. */
+const mergeDestinationLabel = (head: HeadState) => head.branch ?? 'current branch'
+
+/**
+ * Why no branch can be merged into right now, or null when one is checked out:
+ * a detached HEAD is on no branch, and HEAD outside the loaded window leaves the
+ * checked-out branch unknown here.
+ */
+function mergeDestinationUnavailableReason(head: HeadState): string | null {
+  if (head.branch !== null) return null
+  return head.hash === null
+    ? 'HEAD is not in the loaded history, so the checked-out branch is unknown'
+    : 'HEAD is detached — no branch is checked out to merge into'
+}
+
+/**
+ * The "Merge x into y" entry for a local branch, or null on the checked-out
+ * branch itself — the one entry that is left out rather than disabled (the
+ * operator's exception to ADR-0025, issue #2).
+ */
+function mergeEntry(branchName: string, head: HeadState): GitMenuEntry | null {
+  if (head.branch === branchName) return null
+  return {
+    action: 'merge-branch',
+    label: `Merge ${branchName} into ${mergeDestinationLabel(head)}`,
+    subject: branchName,
+    unavailableReason: mergeDestinationUnavailableReason(head),
+    mutates: true,
+  }
+}
+
 function refSection(group: RefGroup, input: GitMenuInput): GitMenuSection | null {
   const { head, defaultBranch, commit } = input
   switch (group.kind) {
@@ -158,6 +193,13 @@ function refSection(group: RefGroup, input: GitMenuInput): GitMenuSection | null
             mutates: true,
           },
           {
+            action: 'merge-branch',
+            label: `Merge ${qualifiedName} into ${mergeDestinationLabel(head)}`,
+            subject: group.name,
+            unavailableReason: `${qualifiedName} has no local branch — only local branches can be merged`,
+            mutates: true,
+          },
+          {
             action: 'compare-branch',
             label: 'Compare against the default branch',
             subject: group.name,
@@ -167,7 +209,8 @@ function refSection(group: RefGroup, input: GitMenuInput): GitMenuSection | null
         ],
       }
     }
-    case 'branch':
+    case 'branch': {
+      const merge = mergeEntry(group.name, head)
       return {
         heading: `branch ${group.name}`,
         entries: [
@@ -178,6 +221,7 @@ function refSection(group: RefGroup, input: GitMenuInput): GitMenuSection | null
             unavailableReason: head.branch === group.name ? `${group.name} is already checked out` : null,
             mutates: true,
           },
+          ...(merge === null ? [] : [merge]),
           {
             action: 'compare-branch',
             label: 'Compare against the default branch',
@@ -192,6 +236,7 @@ function refSection(group: RefGroup, input: GitMenuInput): GitMenuSection | null
           },
         ],
       }
+    }
   }
 }
 
@@ -268,4 +313,97 @@ export function describeCheckout(
     )
   }
   return { title, summary, warnings, confirmLabel: target.kind === 'branch' ? 'Check out branch' : 'Check out and detach' }
+}
+
+/**
+ * The merge a "Merge x into y" entry stands for, or null for every other entry
+ * and when no branch is checked out. `into` is the branch the menu saw checked
+ * out; the server refuses the merge if HEAD has moved off it since.
+ */
+export function mergeTargetForEntry(entry: GitMenuEntry, head: HeadState): MergeTarget | null {
+  if (entry.action !== 'merge-branch' || head.branch === null) return null
+  return { branch: entry.subject, into: head.branch }
+}
+
+/**
+ * The statement a host shows before a merge runs — the command, the repository,
+ * and what the result will be — so every surface confirms in the same words.
+ * `fastForward` is the dialog's Fast Forward option: unchecked is a `--no-ff`
+ * merge commit, checked a fast-forward and only a fast-forward.
+ */
+export function describeMerge(
+  target: MergeTarget,
+  { repositoryName, fastForward }: { repositoryName: string; fastForward: boolean },
+): GitActionDescription {
+  const { branch, into } = target
+  const summary = fastForward
+    ? `Runs git merge --ff-only ${branch} in ${repositoryName}: ${into} moves forward to the tip of ${branch}, ` +
+      'and no merge commit is created.'
+    : `Runs git merge --no-ff --no-edit ${branch} in ${repositoryName}: a merge commit with git’s default ` +
+      `message is created on ${into}, even where a fast-forward would be possible.`
+  return {
+    title: `Merge ${branch} into ${into}?`,
+    summary:
+      `${summary} If the merge conflicts, git merge --abort is run and the repository is left as it was. ` +
+      'Nothing is pushed.',
+    warnings: [],
+    confirmLabel: fastForward ? 'Fast-forward' : 'Merge',
+  }
+}
+
+/**
+ * Why the merge cannot run in the state the preview reports, or null when it
+ * can. The server makes the same checks again when the merge is requested,
+ * since the preview can be stale by then.
+ */
+export function mergeBlockedReason(target: MergeTarget, preview: MergePreview): string | null {
+  if (preview.into === null) return `HEAD is detached now, not on ${target.into} — reload the graph and choose again`
+  if (preview.into !== target.into) {
+    return `HEAD is on ${preview.into} now, not on ${target.into} — reload the graph and choose again`
+  }
+  if (preview.mergeInProgress) return `${target.into} is in the middle of a merge — finish or abort it first`
+  if (preview.uncommittedFiles.length > 0) return uncommittedChangesReason(target.into, preview.uncommittedFiles)
+  if (preview.alreadyMerged) return `${target.into} already contains ${target.branch} — there is nothing to merge`
+  return null
+}
+
+/** Why the Fast Forward option cannot be chosen, or null when a fast-forward is possible. */
+export function fastForwardUnavailableReason(target: MergeTarget, preview: MergePreview): string | null {
+  if (preview.alreadyMerged) return `${target.into} already contains ${target.branch} — there is nothing to fast-forward`
+  if (!preview.canFastForward) {
+    return `${target.into} has commits that ${target.branch} does not, so a fast-forward is not possible`
+  }
+  return null
+}
+
+/** How a host shows a merge that did not happen: a heading, then the text below it verbatim. */
+export type GitActionFailure = { heading: string; text: string }
+
+/**
+ * The failure a merge error response describes. Where git ran, its output is
+ * the text, verbatim, under a heading that says what state the repository was
+ * left in — a conflict was aborted, or the abort failed and it is still
+ * mid-merge. Where git did not run, the server's sentence is the text.
+ */
+export function describeMergeFailure(failure: MergeError): GitActionFailure {
+  switch (failure.reason) {
+    case 'conflict-aborted':
+      return {
+        heading:
+          'The merge conflicted and was aborted (git merge --abort): HEAD, the index and the working tree are as ' +
+          'they were. git reported:',
+        text: failure.gitOutput || failure.error,
+      }
+    case 'abort-failed':
+      return {
+        heading:
+          'The merge conflicted and git merge --abort failed: the repository is still mid-merge — resolve or ' +
+          'abort it by hand. git reported:',
+        text: failure.gitOutput || failure.error,
+      }
+    case 'merge-refused':
+      return { heading: 'git refused:', text: failure.gitOutput || failure.error }
+    default:
+      return { heading: 'The merge did not run:', text: failure.error }
+  }
 }

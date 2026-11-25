@@ -27,6 +27,13 @@ import {
 } from '../../shared/workingTree'
 import type { RepositorySet, ServedRepository } from './repository-set'
 import { checkoutArguments, type ResolvedCheckout } from '../../shared/checkout'
+import {
+  MERGE_ABORT_ARGUMENTS,
+  TRACKED_CHANGES_ARGUMENTS,
+  mergeArguments,
+  mergeReport,
+  uncommittedChangesReason,
+} from '../../shared/merge'
 import { MAX_FILE_CHANGES, parseCommitFileChanges } from '../../shared/commitDetail'
 import { FIELD_SEPARATOR } from '../../shared/gitLog'
 import type {
@@ -38,6 +45,10 @@ import type {
   CommitLog,
   CompareSummary,
   FileDiff,
+  MergeFailureReason,
+  MergePreview,
+  MergeRequest,
+  MergeResult,
   RepositoryList,
   WorkingTree,
 } from '../../shared/git.schema'
@@ -106,6 +117,17 @@ export type CheckoutOutcome =
   | { ok: true; result: CheckoutResult }
   | { ok: false; reason: CheckoutFailureReason; detail?: string }
 
+export type ReadMergePreviewFailureReason = 'unknown-repository' | 'unknown-ref' | 'git-failed'
+
+export type ReadMergePreviewResult =
+  | { ok: true; preview: MergePreview }
+  | { ok: false; reason: ReadMergePreviewFailureReason; detail?: string }
+
+export type MergeOutcome =
+  | { ok: true; result: MergeResult }
+  /** `detail` is the sentence the error response carries; `gitOutput` git's own words, verbatim, when git ran. */
+  | { ok: false; reason: MergeFailureReason; detail?: string; gitOutput?: string }
+
 // Hashes reach `git show` as an argument, so they are re-checked here even
 // though the route schema already validates them — the service is the boundary
 // that owns what may be handed to the shell.
@@ -116,6 +138,10 @@ const LOCAL_BRANCH_PREFIX = 'refs/heads/'
 
 /** Tags live here; a tag checkout names the full refname so it has one reading. */
 const TAG_PREFIX = 'refs/tags/'
+
+/** Everything a git run printed — stdout, then stderr — for showing verbatim. */
+const combinedOutput = ({ stdout, stderr }: { stdout: string; stderr: string }) =>
+  [stdout.trim(), stderr.trim()].filter(Boolean).join('\n')
 
 /** git's line-per-entry stdout as trimmed, non-empty lines. */
 const nonEmptyLines = (stdout: string) =>
@@ -917,6 +943,157 @@ export function createGitService({ repositories: repositorySet }: { repositories
     }
   }
 
+  /**
+   * What merging a local branch into the checked-out branch would meet, read
+   * from git itself — the shared first half of {@link readMergePreview} and
+   * {@link merge}. The branch is resolved by **membership** against
+   * `for-each-ref refs/heads`, the same line as a checkout's, and only the
+   * listing's string (as a full `refs/heads/…` refname for the ancestry checks)
+   * reaches git. Ancestry is git's own (`merge-base --is-ancestor`), so the
+   * answer never depends on how much history the client happened to load.
+   */
+  async function inspectMerge(repositoryPath: string, branchName: string) {
+    const data = await readBranchData(repositoryPath)
+    if (!data.ok) return { ok: false as const, reason: 'git-failed' as const, detail: data.detail }
+    const branch = data.branchNames.find((name) => name === branchName)
+    if (branch === undefined) {
+      return { ok: false as const, reason: 'unknown-ref' as const, detail: `no such branch: ${branchName}` }
+    }
+
+    const branchRef = `${LOCAL_BRANCH_PREFIX}${branch}`
+    const [mergeHead, trackedChanges, branchInHead, headInBranch] = await Promise.all([
+      runGit(repositoryPath, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']),
+      runGit(repositoryPath, [...TRACKED_CHANGES_ARGUMENTS]),
+      runGit(repositoryPath, ['merge-base', '--is-ancestor', branchRef, 'HEAD']),
+      runGit(repositoryPath, ['merge-base', '--is-ancestor', 'HEAD', branchRef]),
+    ])
+    // `--is-ancestor` answers with 0 (yes) or 1 (no); anything else is git failing.
+    const ancestryFailure = [branchInHead, headInBranch].find((result) => result.exitCode > 1)
+    if (trackedChanges.exitCode !== 0 || ancestryFailure !== undefined) {
+      const failed = trackedChanges.exitCode !== 0 ? trackedChanges : ancestryFailure!
+      return { ok: false as const, reason: 'git-failed' as const, detail: failed.stderr.trim() }
+    }
+
+    const alreadyMerged = branchInHead.exitCode === 0
+    return {
+      ok: true as const,
+      state: {
+        branch,
+        into: data.currentBranch,
+        alreadyMerged,
+        canFastForward: !alreadyMerged && headInBranch.exitCode === 0,
+        uncommittedFiles: trackedChanges.stdout.split('\0').filter((path) => path.length > 0),
+        mergeInProgress: mergeHead.exitCode === 0,
+      },
+    }
+  }
+
+  /** What merging `branchName` into the checked-out branch would meet — the confirm dialog's read. */
+  async function readMergePreview(repositoryIdentifier: string, branchName: string): Promise<ReadMergePreviewResult> {
+    const repository = await resolveRepository(repositoryIdentifier)
+    if (!repository) return { ok: false, reason: 'unknown-repository' }
+
+    const inspected = await inspectMerge(repository.absolutePath, branchName)
+    if (!inspected.ok) return inspected
+    return { ok: true, preview: { repository: repository.name, ...inspected.state } }
+  }
+
+  /**
+   * Merge a local branch into the checked-out branch of one listed repository —
+   * the second git write. Before git runs, every refusal the client may not have
+   * seen coming is made here again, because the client's view can be stale: the
+   * branch must be listed, HEAD must still be on the branch the request names,
+   * no merge may be in progress, tracked files must be clean, there must be
+   * something to merge, and a fast-forward must be possible when one is asked
+   * for. Then `git merge --no-ff` or `--ff-only` (see `shared/merge.ts`).
+   *
+   * git's safety stays in charge past that: a merge git refuses (an untracked
+   * file it would overwrite, unrelated histories) comes back as `merge-refused`
+   * with git's output verbatim. A merge that stops on a conflict is undone with
+   * `git merge --abort` and comes back as `conflict-aborted` with git's output
+   * (the conflicting paths); if the abort fails as well, `abort-failed` says the
+   * repository is still mid-merge — a half-merged state is never reported clean.
+   */
+  async function merge(
+    repositoryIdentifier: string,
+    request: Pick<MergeRequest, 'branch' | 'into' | 'fastForward'>,
+  ): Promise<MergeOutcome> {
+    const repository = await resolveRepository(repositoryIdentifier)
+    if (!repository) return { ok: false, reason: 'unknown-repository' }
+
+    const repositoryPath = repository.absolutePath
+    const inspected = await inspectMerge(repositoryPath, request.branch)
+    if (!inspected.ok) return inspected
+
+    const { branch, into, alreadyMerged, canFastForward, uncommittedFiles, mergeInProgress } = inspected.state
+    if (into !== request.into) {
+      return {
+        ok: false,
+        reason: 'stale-head',
+        detail: `HEAD is ${into === null ? 'detached' : `on ${into}`}, not on ${request.into} — reload the graph and choose again`,
+      }
+    }
+    if (mergeInProgress) {
+      return { ok: false, reason: 'merge-in-progress', detail: `${into} is in the middle of a merge — finish or abort it first` }
+    }
+    if (uncommittedFiles.length > 0) {
+      return { ok: false, reason: 'uncommitted-changes', detail: uncommittedChangesReason(into, uncommittedFiles) }
+    }
+    if (alreadyMerged) {
+      return { ok: false, reason: 'nothing-to-merge', detail: `${into} already contains ${branch} — there is nothing to merge` }
+    }
+    if (request.fastForward && !canFastForward) {
+      return {
+        ok: false,
+        reason: 'fast-forward-impossible',
+        detail: `${into} has commits that ${branch} does not, so it cannot be fast-forwarded to ${branch}`,
+      }
+    }
+
+    const merged = await runGit(repositoryPath, mergeArguments({ branch, fastForward: request.fastForward }))
+    if (merged.exitCode !== 0) {
+      const gitOutput = combinedOutput(merged)
+      // A conflict is the one failure that leaves the repository mid-merge;
+      // every other refusal stops before git writes MERGE_HEAD.
+      const midMerge = await runGit(repositoryPath, ['rev-parse', '-q', '--verify', 'MERGE_HEAD'])
+      if (midMerge.exitCode !== 0) {
+        return { ok: false, reason: 'merge-refused', detail: gitOutput || 'git refused the merge', gitOutput }
+      }
+      const aborted = await runGit(repositoryPath, [...MERGE_ABORT_ARGUMENTS])
+      if (aborted.exitCode !== 0) {
+        const bothOutputs = `${gitOutput}\n\n${combinedOutput(aborted)}`
+        return {
+          ok: false,
+          reason: 'abort-failed',
+          detail:
+            `Merging ${branch} into ${into} conflicted, and git merge --abort failed: the repository is still ` +
+            `mid-merge — resolve or abort it by hand.\n\n${bothOutputs}`,
+          gitOutput: bothOutputs,
+        }
+      }
+      return {
+        ok: false,
+        reason: 'conflict-aborted',
+        detail:
+          `Merging ${branch} into ${into} conflicted, so git merge --abort was run: HEAD, the index and the ` +
+          `working tree are as they were.\n\n${gitOutput}`,
+        gitOutput,
+      }
+    }
+
+    const headResult = await runGit(repositoryPath, ['rev-parse', '--short', '--verify', 'HEAD'])
+    return {
+      ok: true,
+      result: {
+        repository: repository.name,
+        head: headResult.stdout.trim(),
+        branch: request.into,
+        fastForward: request.fastForward,
+        message: mergeReport(merged.stdout),
+      },
+    }
+  }
+
   return {
     listRepositories,
     readCommitLog,
@@ -928,6 +1105,8 @@ export function createGitService({ repositories: repositorySet }: { repositories
     readWorkingTree,
     readWorkingFileDiff,
     checkout,
+    readMergePreview,
+    merge,
   }
 }
 

@@ -217,6 +217,13 @@ describe('createGitService', () => {
       const checkout = await service.checkout(outsidePath, { kind: 'branch', name: 'feature-x' })
       expect(checkout).toEqual({ ok: false, reason: 'unknown-repository' })
       expect(symbolicHead()).toBe('refs/heads/main')
+      // The merge holds the same line: `feature-x` would merge into `main` there.
+      const headHash = () => Bun.spawnSync(['git', '-C', outsidePath, 'rev-parse', 'HEAD']).stdout.toString().trim()
+      const hashBefore = headHash()
+      const merge = await service.merge(outsidePath, { branch: 'feature-x', into: 'main', fastForward: false })
+      expect(merge).toEqual({ ok: false, reason: 'unknown-repository' })
+      expect(await service.readMergePreview(outsidePath, 'feature-x')).toEqual({ ok: false, reason: 'unknown-repository' })
+      expect(headHash()).toBe(hashBefore)
     } finally {
       rmSync(listDirectory, { recursive: true, force: true })
     }
@@ -919,5 +926,254 @@ describe('checkout', () => {
     expect(outcome.detail).toContain('tracked.txt')
     expect(fixture.currentBranch()).toBe('main')
     expect(await Bun.file(join(fixture.repositoryPath, 'tracked.txt')).text()).toBe('uncommitted work\n')
+  })
+})
+
+// The second write. Each test builds its own repository, because a merge
+// changes the state the next test would start from. What is pinned: a `--no-ff`
+// merge commit with git's default message, a fast-forward when chosen and
+// possible and refused when not, every refusal the service makes before git runs
+// (dirty tracked files, nothing to merge, a stale checked-out branch, names the
+// listing does not hold) with HEAD untouched, and a conflict undone with
+// `git merge --abort` — HEAD, index and tree as before — with git's output kept.
+describe('merge', () => {
+  const service = () => createGitService({ repositories: createServedRootRepositorySet(scratchRoot) })
+  let fixtureCount = 0
+
+  // A merge commit needs an identity, and the service's git inherits this
+  // process's environment. Pinned here, with the user's global config shut out,
+  // so the machine's own config (signing, hooks) cannot change the result.
+  const identity = {
+    GIT_AUTHOR_NAME: 'Test',
+    GIT_AUTHOR_EMAIL: 'test@example.invalid',
+    GIT_COMMITTER_NAME: 'Test',
+    GIT_COMMITTER_EMAIL: 'test@example.invalid',
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_CONFIG_SYSTEM: '/dev/null',
+  }
+  const savedEnvironment: Record<string, string | undefined> = {}
+  beforeAll(() => {
+    for (const [name, value] of Object.entries(identity)) {
+      savedEnvironment[name] = process.env[name]
+      process.env[name] = value
+    }
+  })
+  afterAll(() => {
+    for (const [name, value] of Object.entries(savedEnvironment)) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+  })
+
+  const gitOutput = (repositoryPath: string, ...gitArguments: string[]) =>
+    Bun.spawnSync(['git', '-C', repositoryPath, ...gitArguments], { env: { ...process.env, ...identity } })
+      .stdout.toString()
+      .trim()
+
+  /**
+   * `main` (checked out) is `base` plus a commit that changes `conflict.txt`.
+   * `ahead` is one commit past main (a fast-forward is possible); `diverged`
+   * adds a file off `base` (it is not); `clash` changes `conflict.txt` off
+   * `base` (a conflict); `merged` sits at `base` (nothing to merge); `fresh`
+   * adds `fresh.txt` off main (an untracked `fresh.txt` makes git refuse); the
+   * tag `v1` and the remote-only `origin/published` are not local branches.
+   */
+  function createMergeFixture() {
+    fixtureCount += 1
+    const repositoryName = `merge-repo-${fixtureCount}`
+    const repositoryPath = join(scratchRoot, repositoryName)
+    const write = (fileName: string, contents: string) => writeFileSync(join(repositoryPath, fileName), contents)
+    runGit(scratchRoot, 'init', '-b', 'main', repositoryPath)
+    write('tracked.txt', 'base\n')
+    write('conflict.txt', 'base\n')
+    runGit(repositoryPath, 'add', '-A')
+    runGit(repositoryPath, 'commit', '-m', 'base')
+    runGit(repositoryPath, 'tag', 'v1')
+    runGit(repositoryPath, 'branch', 'merged')
+    runGit(repositoryPath, 'checkout', '-b', 'diverged')
+    write('side.txt', 'side\n')
+    runGit(repositoryPath, 'add', '-A')
+    runGit(repositoryPath, 'commit', '-m', 'diverged work')
+    runGit(repositoryPath, 'checkout', '-b', 'clash', 'main')
+    write('conflict.txt', 'clash\n')
+    runGit(repositoryPath, 'commit', '-am', 'clash work')
+    runGit(repositoryPath, 'checkout', 'main')
+    write('conflict.txt', 'main\n')
+    runGit(repositoryPath, 'commit', '-am', 'main second')
+    runGit(repositoryPath, 'checkout', '-b', 'ahead')
+    write('ahead.txt', 'ahead\n')
+    runGit(repositoryPath, 'add', '-A')
+    runGit(repositoryPath, 'commit', '-m', 'ahead work')
+    runGit(repositoryPath, 'checkout', '-b', 'fresh', 'main')
+    write('fresh.txt', 'committed\n')
+    runGit(repositoryPath, 'add', '-A')
+    runGit(repositoryPath, 'commit', '-m', 'fresh work')
+    runGit(repositoryPath, 'checkout', 'main')
+    runGit(repositoryPath, 'remote', 'add', 'origin', 'https://example.invalid/m.git')
+    runGit(repositoryPath, 'update-ref', 'refs/remotes/origin/published', 'ahead')
+    const read = (...gitArguments: string[]) => gitOutput(repositoryPath, ...gitArguments)
+    return {
+      repositoryName,
+      repositoryPath,
+      write,
+      fullHashOf: (revision: string) => read('rev-parse', `${revision}^{commit}`),
+      currentBranch: () => read('branch', '--show-current'),
+      headHash: () => read('rev-parse', 'HEAD'),
+      /** HEAD, the index, and the working tree, as one comparable value. */
+      repositoryState: () => ({
+        head: read('rev-parse', 'HEAD'),
+        branch: read('branch', '--show-current'),
+        index: read('ls-files', '--stage'),
+        status: read('status', '--porcelain=v1', '--untracked-files=all'),
+        mergeHead: read('rev-parse', '-q', '--verify', 'MERGE_HEAD'),
+      }),
+      read,
+    }
+  }
+
+  const merge = (repositoryName: string, branch: string, options: { into?: string; fastForward?: boolean } = {}) =>
+    service().merge(repositoryName, { branch, into: options.into ?? 'main', fastForward: options.fastForward ?? false })
+
+  test('merges --no-ff by default: a merge commit with git’s default message, even where a fast-forward was possible', async () => {
+    const fixture = createMergeFixture()
+    const mainBefore = fixture.headHash()
+    const outcome = await merge(fixture.repositoryName, 'ahead')
+    if (!outcome.ok) throw new Error(`expected ok, got ${outcome.reason}: ${outcome.detail}`)
+    expect(outcome.result).toMatchObject({ branch: 'main', fastForward: false, message: "Merge made by the 'ort' strategy." })
+    expect(fixture.currentBranch()).toBe('main')
+    expect(fixture.read('log', '-1', '--format=%P')).toBe(`${mainBefore} ${fixture.fullHashOf('ahead')}`)
+    // git's own default message — `main` is left out of it by git itself.
+    expect(fixture.read('log', '-1', '--format=%B')).toBe("Merge branch 'ahead'")
+    expect(fixture.fullHashOf('main').startsWith(outcome.result.head)).toBe(true)
+  })
+
+  test('fast-forwards when Fast Forward is chosen and possible: no merge commit', async () => {
+    const fixture = createMergeFixture()
+    const outcome = await merge(fixture.repositoryName, 'ahead', { fastForward: true })
+    if (!outcome.ok) throw new Error(`expected ok, got ${outcome.reason}: ${outcome.detail}`)
+    expect(outcome.result.fastForward).toBe(true)
+    expect(outcome.result.message).toMatch(/^Updating [0-9a-f]+\.\.[0-9a-f]+, Fast-forward$/)
+    expect(fixture.headHash()).toBe(fixture.fullHashOf('ahead'))
+    expect(fixture.currentBranch()).toBe('main')
+  })
+
+  test('refuses a fast-forward that is not possible, before git runs, HEAD untouched', async () => {
+    const fixture = createMergeFixture()
+    const before = fixture.repositoryState()
+    const outcome = await merge(fixture.repositoryName, 'diverged', { fastForward: true })
+    expect(outcome).toMatchObject({ ok: false, reason: 'fast-forward-impossible' })
+    expect(fixture.repositoryState()).toEqual(before)
+  })
+
+  test('refuses on uncommitted tracked changes, staged or not, leaving HEAD and the changes intact', async () => {
+    const fixture = createMergeFixture()
+    fixture.write('tracked.txt', 'unstaged work\n')
+    const unstaged = fixture.repositoryState()
+    const outcome = await merge(fixture.repositoryName, 'ahead')
+    expect(outcome).toMatchObject({ ok: false, reason: 'uncommitted-changes' })
+    if (!outcome.ok) expect(outcome.detail).toContain('tracked.txt')
+    expect(fixture.repositoryState()).toEqual(unstaged)
+    expect(await Bun.file(join(fixture.repositoryPath, 'tracked.txt')).text()).toBe('unstaged work\n')
+
+    fixture.read('add', 'tracked.txt')
+    const staged = fixture.repositoryState()
+    expect(await merge(fixture.repositoryName, 'ahead')).toMatchObject({ ok: false, reason: 'uncommitted-changes' })
+    expect(fixture.repositoryState()).toEqual(staged)
+  })
+
+  test('an untracked file does not block; one the merge would overwrite comes back as git’s refusal, verbatim', async () => {
+    const fixture = createMergeFixture()
+    fixture.write('notes.txt', 'untracked\n')
+    expect(await service().readMergePreview(fixture.repositoryName, 'ahead')).toMatchObject({
+      ok: true,
+      preview: { uncommittedFiles: [] },
+    })
+    const unrelated = await merge(fixture.repositoryName, 'ahead', { fastForward: true })
+    expect(unrelated.ok).toBe(true)
+
+    fixture.write('fresh.txt', 'untracked\n')
+    const before = fixture.repositoryState()
+    const outcome = await merge(fixture.repositoryName, 'fresh')
+    expect(outcome).toMatchObject({ ok: false, reason: 'merge-refused' })
+    if (!outcome.ok) {
+      expect(outcome.gitOutput).toContain('untracked working tree files would be overwritten by merge')
+      expect(outcome.gitOutput).toContain('fresh.txt')
+      expect(outcome.detail).toBe(outcome.gitOutput)
+    }
+    expect(fixture.repositoryState()).toEqual(before)
+    expect(await Bun.file(join(fixture.repositoryPath, 'fresh.txt')).text()).toBe('untracked\n')
+  })
+
+  test('a conflict is aborted: HEAD, index and tree as before, git’s output — the conflicting path — kept', async () => {
+    const fixture = createMergeFixture()
+    const before = fixture.repositoryState()
+    const outcome = await merge(fixture.repositoryName, 'clash')
+    expect(outcome).toMatchObject({ ok: false, reason: 'conflict-aborted' })
+    if (!outcome.ok) {
+      expect(outcome.gitOutput).toContain('CONFLICT (content): Merge conflict in conflict.txt')
+      expect(outcome.detail).toContain('git merge --abort')
+      expect(outcome.detail).toContain(outcome.gitOutput!)
+    }
+    expect(fixture.repositoryState()).toEqual(before)
+    expect(before.mergeHead).toBe('')
+    expect(await Bun.file(join(fixture.repositoryPath, 'conflict.txt')).text()).toBe('main\n')
+  })
+
+  test('refuses a branch already contained in the checked-out one: nothing to merge', async () => {
+    const fixture = createMergeFixture()
+    const before = fixture.repositoryState()
+    expect(await merge(fixture.repositoryName, 'merged')).toMatchObject({ ok: false, reason: 'nothing-to-merge' })
+    expect(fixture.repositoryState()).toEqual(before)
+  })
+
+  test('refuses every branch name the listing does not hold, before git runs, HEAD untouched', async () => {
+    const fixture = createMergeFixture()
+    const before = fixture.repositoryState()
+    for (const branch of ['nope', 'published', 'origin/published', 'v1', '--orphan', '--no-verify', 'main~1', 'ahead^{commit}', 'refs/heads/ahead', 'HEAD']) {
+      expect(await merge(fixture.repositoryName, branch)).toMatchObject({ ok: false, reason: 'unknown-ref' })
+    }
+    expect(await merge('../escape', 'ahead')).toMatchObject({ ok: false, reason: 'unknown-repository' })
+    expect(fixture.repositoryState()).toEqual(before)
+  })
+
+  test('refuses a merge chosen against a stale view: HEAD is not on the branch the request names', async () => {
+    const fixture = createMergeFixture()
+    const before = fixture.repositoryState()
+    const moved = await merge(fixture.repositoryName, 'ahead', { into: 'diverged' })
+    expect(moved).toMatchObject({ ok: false, reason: 'stale-head' })
+    if (!moved.ok) expect(moved.detail).toContain('HEAD is on main, not on diverged')
+    expect(fixture.repositoryState()).toEqual(before)
+
+    fixture.read('switch', '--detach', 'main')
+    const detached = fixture.repositoryState()
+    expect(await merge(fixture.repositoryName, 'ahead')).toMatchObject({ ok: false, reason: 'stale-head' })
+    expect(fixture.repositoryState()).toEqual(detached)
+  })
+
+  test('the preview reports what the merge would meet, from git’s own ancestry', async () => {
+    const fixture = createMergeFixture()
+    const previewOf = async (branch: string) => {
+      const result = await service().readMergePreview(fixture.repositoryName, branch)
+      if (!result.ok) throw new Error(`expected ok, got ${result.reason}`)
+      return result.preview
+    }
+    expect(await previewOf('ahead')).toEqual({
+      repository: fixture.repositoryName,
+      branch: 'ahead',
+      into: 'main',
+      alreadyMerged: false,
+      canFastForward: true,
+      uncommittedFiles: [],
+      mergeInProgress: false,
+    })
+    expect(await previewOf('diverged')).toMatchObject({ alreadyMerged: false, canFastForward: false })
+    expect(await previewOf('merged')).toMatchObject({ alreadyMerged: true, canFastForward: false })
+    fixture.write('tracked.txt', 'dirty\n')
+    fixture.write('untracked.txt', 'not listed\n')
+    expect((await previewOf('ahead')).uncommittedFiles).toEqual(['tracked.txt'])
+    expect(await service().readMergePreview(fixture.repositoryName, 'origin/published')).toMatchObject({
+      ok: false,
+      reason: 'unknown-ref',
+    })
   })
 })
